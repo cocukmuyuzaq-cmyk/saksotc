@@ -15,7 +15,7 @@ from discord import app_commands
 from discord.ext import commands
 
 # ==================== HEALTH CHECK SERVER ====================
-# Render'ın "Web Service" olarak çalışması için basit HTTP sunucusu
+# Render Web Service için port dinleyen basit sunucu
 def run_health_server():
     port = int(os.getenv("PORT", 10000))
 
@@ -67,6 +67,7 @@ COLOR_OK   = 0x10b981
 COLOR_ERR  = 0xe11d48
 COLOR_Z    = 0x8b5cf6
 
+# ==================== FİLTRE KURALLARI ====================
 BLOCKED_PATTERNS = [
     "arastirguncel",
     "iptal edilmiştir",
