@@ -4,6 +4,8 @@ import os
 import json
 import asyncio
 import datetime
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Optional
 from urllib.parse import urlencode
 
@@ -12,25 +14,50 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+# ==================== HEALTH CHECK SERVER ====================
+# Render'ın "Web Service" olarak çalışması için basit HTTP sunucusu
+def run_health_server():
+    port = int(os.getenv("PORT", 10000))
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(b"ZENIX CHECKER - AKTIF")
+
+        def do_HEAD(self):
+            self.send_response(200)
+            self.end_headers()
+
+        def log_message(self, format, *args):
+            pass  # Konsolu kirletmesin
+
+    server = HTTPServer(("0.0.0.0", port), Handler)
+    print(f"🌐 Health check {port} portunda çalışıyor")
+    server.serve_forever()
+
+# Arka planda başlat
+threading.Thread(target=run_health_server, daemon=True).start()
+
+
 # ==================== ENV'DEN OKUMA ====================
 try:
     from dotenv import load_dotenv
     load_dotenv()
 except ImportError:
-    pass  # dotenv yoksa sorun değil, Render env vars kullanır
+    pass
 
-# Token ve ayarlar ENV'den gelir
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN", "")
 SEARCH_KEY    = os.getenv("SEARCH_API_KEY", "91e2c5dfa0de4a22e2afbe5b")
 
-# API Endpoint'leri (sabit)
+# API Endpoint'leri
 WAZELY       = "https://wazely.vercel.app/api"
 WAZELY_API   = "https://wazelyapi.vercel.app/api"
 SOLIDARK     = "https://solidarksystems.alwaysdata.net"
 SEARCHULP    = "https://searchulp.xyz/api"
 ID_API       = "https://prox0959.netlify.app/api/search"
 
-# Logo
 LOGO_URL = os.getenv(
     "LOGO_URL",
     "https://media.discordapp.net/attachments/1547608436726824990/1557810396914651217/image.png?ex=6ac9277d&is=6ac7d5fd&hm=cd53b64f969a5b8c89b88f7375dd6cd5ae7d120b8f711ca778f349215a24da54&=&format=webp&quality=lossless"
@@ -40,7 +67,6 @@ COLOR_OK   = 0x10b981
 COLOR_ERR  = 0xe11d48
 COLOR_Z    = 0x8b5cf6
 
-# ==================== FİLTRE KURALLARI ====================
 BLOCKED_PATTERNS = [
     "arastirguncel",
     "iptal edilmiştir",
@@ -63,7 +89,7 @@ CLEANUP_WORDS = [
 # ==================== BOT ====================
 intents = discord.Intents.default()
 intents.message_content = True
-intents.members = True   # hoş geldin mesajı için
+intents.members = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 
@@ -107,31 +133,26 @@ def scrub_text(text: str) -> str:
 def clean_data(data, depth: int = 0):
     if depth > 10:
         return data
-
     if isinstance(data, str):
         if contains_blocked(data):
             return None
         return scrub_text(data)
-
     if isinstance(data, dict):
         err = data.get("error")
         if err and isinstance(err, str) and contains_blocked(err):
             return None
-
         cleaned = {}
         for k, v in data.items():
             if k.lower() == "dev":
-                continue  # marka adını sil
+                continue
             cleaned_v = clean_data(v, depth + 1)
             if cleaned_v is not None:
                 cleaned[k] = cleaned_v
         return cleaned if cleaned else None
-
     if isinstance(data, list):
         cleaned = [clean_data(x, depth + 1) for x in data]
         cleaned = [x for x in cleaned if x is not None]
         return cleaned if cleaned else None
-
     return data
 
 
@@ -141,7 +162,6 @@ def chunk_text(text: str, size: int = 1900):
 
 async def send_result(interaction: discord.Interaction, data):
     cleaned = clean_data(data)
-
     if cleaned is None:
         embed = discord.Embed(color=COLOR_ERR, description="```\nSonuç bulunamadı.\n```")
         embed.set_thumbnail(url=LOGO_URL)
@@ -177,7 +197,6 @@ async def send_result(interaction: discord.Interaction, data):
             await interaction.followup.send(chunk)
 
 
-# ==================== HOŞ GELDİN ====================
 def build_welcome_embed() -> discord.Embed:
     embed = discord.Embed(
         title="✨  HOŞ GELDİNİZ  ✨",
@@ -577,8 +596,6 @@ bot.tree.add_command(zenix3_group)
 if __name__ == "__main__":
     if not DISCORD_TOKEN:
         print("❌ DISCORD_TOKEN bulunamadı!")
-        print("   Render'da: Environment → Add Environment Variable")
-        print("   Yerelde: .env dosyasına ekle → DISCORD_TOKEN=xxx")
         exit(1)
     print("🚀 ZENIX başlatılıyor...")
     bot.run(DISCORD_TOKEN)
