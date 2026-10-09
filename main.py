@@ -1,4 +1,4 @@
-# main.py — ZENIX Sorgu Botu
+# main.py — ZENIX Sorgu Botu (42 Modül)
 import io
 import os
 import json
@@ -17,7 +17,6 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-# SMS Bomber'ı ayrı dosyadan import et
 from smsapi import SmsBomber, SERVICE_NAMES
 
 # ==================== HEALTH CHECK ====================
@@ -55,6 +54,7 @@ WAZELY_API   = "https://wazelyapi.vercel.app/api"
 SOLIDARK     = "https://solidarksystems.alwaysdata.net"
 SEARCHULP    = "https://searchulp.xyz/api"
 ID_API       = "https://prox0959.netlify.app/api/search"
+DISCORD_API_BASE = "https://kekeburasine-production-cb45.up.railway.app"
 
 LOGO_URL = os.getenv("LOGO_URL", "https://media.discordapp.net/attachments/1547608436726824990/1557810396914651217/image.png?ex=6ac9277d&is=6ac7d5fd&hm=cd53b64f969a5b8c89b88f7375dd6cd5ae7d120b8f711ca778f349215a24da54&=&format=webp&quality=lossless")
 
@@ -99,10 +99,44 @@ def is_allowed_guild(gid): return gid is not None and gid in DB["guilds"]
 def is_admin(uid): return uid == ADMIN_ID
 
 # ==================== FİLTRE ====================
-HARD_BLOCK = ["arastirguncel", "iptal edilmiştir", "iptal edilmistir", "lutfen telegram", "lütfen telegram", "kanalimiza tekrar", "anahtariniz iptal", "anahtarınız iptal", "jessy_php", "@jessy", "jessy", "@wazelybaba", "wazelybaba", "wazely", "@ato.asd", "ato.asd", "atoasd", "@coder", "coder_"]
-SOFT_CLEAN = ["@arastirguncel", "arastirguncel", "t.me/arastirguncel", "telegram kanalimiza", "telegram kanalımıza", "@jessy_php", "jessy_php", "@jessy", "@wazelybaba", "wazelybaba", "@ato.asd", "ato.asd"]
-STRIP_KEYS = {"dev", "auth", "author", "developer", "credit", "credits", "owner", "made_by", "madeby", "creator", "source", "powered_by", "poweredby", "signature", "sign", "vendor", "provider_tag", "tg", "telegram", "contact", "sig", "watermark", "coder", "ig", "instagram", "message", "msg", "note", "not", "info_text", "info_message", "bio", "bio_text", "author_info", "signature_text", "sign_text", "extra", "extras", "meta", "meta_info", "developer_info"}
-REGEX_PATTERNS = [re.compile(r'ig\s*:\s*@?\w+', re.IGNORECASE), re.compile(r'instagram\s*:\s*@?\w+', re.IGNORECASE), re.compile(r'tg\s*:\s*@?\w+', re.IGNORECASE), re.compile(r'telegram\s*:\s*@?\w+', re.IGNORECASE), re.compile(r'auth\s*:\s*@?\w+', re.IGNORECASE), re.compile(r'coder\s*:\s*@?\w+', re.IGNORECASE), re.compile(r'dev\s*:\s*@?\w+', re.IGNORECASE), re.compile(r'credits?\s*:\s*@?\w+', re.IGNORECASE), re.compile(r'by\s+@\w+', re.IGNORECASE), re.compile(r'@[a-zA-Z0-9_.]+')]
+HARD_BLOCK = [
+    "arastirguncel", "iptal edilmiştir", "iptal edilmistir",
+    "lutfen telegram", "lütfen telegram", "kanalimiza tekrar",
+    "anahtariniz iptal", "anahtarınız iptal",
+    "jessy_php", "@jessy", "jessy",
+    "@wazelybaba", "wazelybaba", "wazely",
+    "@ato.asd", "ato.asd", "atoasd",
+    "@coder", "coder_",
+]
+SOFT_CLEAN = [
+    "@arastirguncel", "arastirguncel", "t.me/arastirguncel",
+    "telegram kanalimiza", "telegram kanalımıza",
+    "@jessy_php", "jessy_php", "@jessy",
+    "@wazelybaba", "wazelybaba",
+    "@ato.asd", "ato.asd",
+]
+STRIP_KEYS = {
+    "dev", "auth", "author", "developer", "credit", "credits",
+    "owner", "made_by", "madeby", "creator", "source", "powered_by",
+    "poweredby", "signature", "sign", "vendor", "provider_tag",
+    "tg", "telegram", "contact", "sig", "watermark",
+    "coder", "ig", "instagram", "message", "msg", "note",
+    "not", "info_text", "info_message", "bio", "bio_text",
+    "author_info", "signature_text", "sign_text", "extra",
+    "extras", "meta", "meta_info", "developer_info",
+}
+REGEX_PATTERNS = [
+    re.compile(r'ig\s*:\s*@?\w+', re.IGNORECASE),
+    re.compile(r'instagram\s*:\s*@?\w+', re.IGNORECASE),
+    re.compile(r'tg\s*:\s*@?\w+', re.IGNORECASE),
+    re.compile(r'telegram\s*:\s*@?\w+', re.IGNORECASE),
+    re.compile(r'auth\s*:\s*@?\w+', re.IGNORECASE),
+    re.compile(r'coder\s*:\s*@?\w+', re.IGNORECASE),
+    re.compile(r'dev\s*:\s*@?\w+', re.IGNORECASE),
+    re.compile(r'credits?\s*:\s*@?\w+', re.IGNORECASE),
+    re.compile(r'by\s+@\w+', re.IGNORECASE),
+    re.compile(r'@[a-zA-Z0-9_.]+'),
+]
 
 def contains_hard_block(t):
     if not isinstance(t, str): return False
@@ -218,7 +252,7 @@ async def on_member_join(member):
             except: pass
             break
 
-# ==================== ANAHTAR KOMUTLARI ====================
+# ==================== ANAHTAR ====================
 @bot.tree.command(name="anahtargir", description="ZENIX anahtarını gir")
 @app_commands.describe(anahtar="ZENIX-XXXX-XXXX-XXXX")
 async def anahtargir(interaction, anahtar: str):
@@ -230,7 +264,7 @@ async def anahtargir(interaction, anahtar: str):
     if user_has_key(interaction.user.id):
         await interaction.response.send_message(f"✅ Zaten: `{get_user_key(interaction.user.id)}`", ephemeral=True); return
     if anahtar not in DB["keys"]:
-        await interaction.response.send_message("❌ Geçersiz anahtar.", ephemeral=True); return
+        await interaction.response.send_message("❌ Geçersiz.", ephemeral=True); return
     ki = DB["keys"][anahtar]
     if ki.get("user_id") and ki["user_id"] != interaction.user.id:
         await interaction.response.send_message("❌ Başkasına ait.", ephemeral=True); return
@@ -264,13 +298,13 @@ async def anahtarsil(interaction, kullanici: discord.Member):
         await interaction.response.send_message("❌ Admin değilsin.", ephemeral=True); return
     uid = str(kullanici.id)
     if uid not in DB["user_keys"]:
-        await interaction.response.send_message("❌ Anahtarı yok.", ephemeral=True); return
+        await interaction.response.send_message("❌ Yok.", ephemeral=True); return
     k = DB["user_keys"].pop(uid)
     if k in DB["keys"]: DB["keys"].pop(k)
     save_db()
     await interaction.response.send_message(f"✅ {kullanici.mention} silindi.", ephemeral=True)
 
-@bot.tree.command(name="anahtarlistesi", description="[ADMIN] Anahtar listesi")
+@bot.tree.command(name="anahtarlistesi", description="[ADMIN] Anahtarlar")
 async def anahtarlistesi(interaction):
     if not is_admin(interaction.user.id):
         await interaction.response.send_message("❌ Admin değilsin.", ephemeral=True); return
@@ -283,7 +317,7 @@ async def anahtarlistesi(interaction):
     e.set_thumbnail(url=LOGO_URL)
     await interaction.response.send_message(embed=e, ephemeral=True)
 
-# ==================== SUNUCU KOMUTLARI ====================
+# ==================== SUNUCU ====================
 @bot.tree.command(name="sunucuekle", description="[ADMIN] Sunucu ekle + davet linki")
 @app_commands.describe(sunucu_id="Sunucu ID")
 async def sunucuekle(interaction, sunucu_id: str):
@@ -295,13 +329,13 @@ async def sunucuekle(interaction, sunucu_id: str):
         await interaction.response.send_message(f"ℹ️ Zaten ekli: `{gid}`", ephemeral=True); return
     DB["guilds"].append(gid); save_db()
     url = discord.utils.oauth_url(bot.user.id, permissions=discord.Permissions(administrator=True), scopes=("bot", "applications.commands"), guild=discord.Object(id=gid))
-    e = discord.Embed(title="✅ Sunucu Eklendi", description=f"`{gid}` listeye eklendi.", color=COLOR_OK)
+    e = discord.Embed(title="✅ Sunucu Eklendi", description=f"`{gid}` eklendi.", color=COLOR_OK)
     e.add_field(name="🔗 Davet Linki", value=f"[Tıkla]({url})", inline=False)
     e.add_field(name="📋 Kopyala", value=f"```\n{url}\n```", inline=False)
     e.set_thumbnail(url=LOGO_URL)
     await interaction.response.send_message(embed=e, ephemeral=True)
 
-@bot.tree.command(name="sunuculistesi", description="[ADMIN] İzinli sunucular")
+@bot.tree.command(name="sunuculistesi", description="[ADMIN] Sunucular")
 async def sunuculistesi(interaction):
     if not is_admin(interaction.user.id):
         await interaction.response.send_message("❌ Admin değilsin.", ephemeral=True); return
@@ -377,6 +411,13 @@ async def zl(interaction, url: str):
     await interaction.response.defer()
     await send_result(interaction, await fetch_json(f"{SOLIDARK}/log.php?url={url}"))
 
+@zg.command(name="logglobal", description="Global log")
+@app_commands.describe(domain="Domain")
+async def zlg(interaction, domain: str):
+    if not await precheck(interaction): return
+    await interaction.response.defer()
+    await send_result(interaction, await fetch_json(f"{DISCORD_API_BASE}/log/global?domain={domain}"))
+
 @zg.command(name="eczane", description="Eczane")
 @app_commands.describe(ad="Ad")
 async def ze(interaction, ad: str):
@@ -405,13 +446,13 @@ async def zba(interaction, isimsoyisim: str):
     await interaction.response.defer()
     await send_result(interaction, await fetch_json(f"{WAZELY}/bahis?isimsoyisim={isimsoyisim}"))
 
-@zg.command(name="exxengen", description="Exxen gen")
+@zg.command(name="exxengen", description="Exxen hesap")
 async def zex(interaction):
     if not await precheck(interaction): return
     await interaction.response.defer()
     await send_result(interaction, await fetch_json(f"{WAZELY}/exxengen"))
 
-@zg.command(name="nitrogen", description="Nitro")
+@zg.command(name="nitrogen", description="Nitro kodları")
 @app_commands.describe(count="Adet")
 async def zn(interaction, count: Optional[int] = 10):
     if not await precheck(interaction): return
@@ -432,19 +473,25 @@ async def zpl(interaction, plate: str):
     await interaction.response.defer()
     await send_result(interaction, await fetch_json(f"{WAZELY}/plaka?plate={plate}"))
 
-@zg.command(name="predunyam", description="Predunyam")
+@zg.command(name="predunyam", description="Predunyam hesap")
 async def zpr(interaction):
     if not await precheck(interaction): return
     await interaction.response.defer()
     await send_result(interaction, await fetch_json(f"{WAZELY}/predunyam"))
 
-@zg.command(name="useragent", description="UA")
+@zg.command(name="useragent", description="Rastgele UA")
 async def zua(interaction):
     if not await precheck(interaction): return
     await interaction.response.defer()
     await send_result(interaction, await fetch_json(f"{WAZELY}/randomuseragent"))
 
-# ==================== SMS BOMBER ====================
+@zg.command(name="discord", description="Discord ID sorgu")
+@app_commands.describe(id="Discord ID")
+async def zdis(interaction, id: str):
+    if not await precheck(interaction): return
+    await interaction.response.defer()
+    await send_result(interaction, await fetch_json(f"{ID_API}?id={id}"))
+
 @zg.command(name="smsbomber", description="SMS Bomber - Normal")
 @app_commands.describe(numara="Telefon", adet="Tur (max 10)", mail="Mail (ops.)")
 async def zsb(interaction, numara: str, adet: Optional[int] = 1, mail: Optional[str] = None):
@@ -521,8 +568,8 @@ async def zsv(interaction):
     e.set_thumbnail(url=LOGO_URL)
     await interaction.response.send_message(embed=e)
 
-# ==================== /zenix2 ====================
-@zg2.command(name="tc", description="TC")
+# ==================== /zenix2 — TC/KİMLİK ====================
+@zg2.command(name="tc", description="TC sorgu")
 @app_commands.describe(tc="TC")
 async def z2tc(interaction, tc: str):
     if not await precheck(interaction): return
@@ -617,7 +664,36 @@ async def z2id(interaction, id: str):
     await interaction.response.defer()
     await send_result(interaction, await fetch_json(f"{ID_API}?id={id}"))
 
-# ==================== /zenix3 ====================
+@zg2.command(name="toplutc", description="Toplu TC sorgu")
+@app_commands.describe(tcler="Her satıra bir TC (11 hane)")
+async def z2tt(interaction, tcler: str):
+    if not await precheck(interaction): return
+    await interaction.response.defer()
+    tclist = [t.strip() for t in tcler.split("\n") if len(t.strip()) == 11]
+    if not tclist:
+        await send_result(interaction, {"error": "Geçerli TC bulunamadı"}); return
+    results = {}
+    for tc in tclist[:20]:
+        d = await fetch_json(f"{SOLIDARK}/tcpro.php?tc={tc}")
+        if clean_data(d) is None:
+            d = await fetch_json(f"{SEARCHULP}/tc/{tc}?key={SEARCH_KEY}")
+        results[tc] = clean_data(d) or "Bulunamadı"
+    await send_result(interaction, results)
+
+@zg2.command(name="profil", description="Kişi profili (5'li)")
+@app_commands.describe(tc="TC")
+async def z2p(interaction, tc: str):
+    if not await precheck(interaction): return
+    await interaction.response.defer()
+    profile = {}
+    profile["Kimlik"] = await fetch_json(f"{SEARCHULP}/tc/{tc}?key={SEARCH_KEY}")
+    profile["Aile"] = await fetch_json(f"{SEARCHULP}/aile/{tc}?key={SEARCH_KEY}")
+    profile["Adres"] = await fetch_json(f"{SEARCHULP}/adres/{tc}?key={SEARCH_KEY}")
+    profile["GSM"] = await fetch_json(f"{SEARCHULP}/tcgsm/{tc}?key={SEARCH_KEY}")
+    profile["İşyeri"] = await fetch_json(f"{SEARCHULP}/isyeri/{tc}?key={SEARCH_KEY}")
+    await send_result(interaction, profile)
+
+# ==================== /zenix3 — AD/SOYAD ====================
 @zg3.command(name="adsoyad", description="Ad soyad arama")
 @app_commands.describe(ad="Ad", soyad="Soyad", il="İl", ilce="İlçe", dogumtarihi="Doğum")
 async def z3as(interaction, ad: str, soyad: Optional[str] = None, il: Optional[str] = None, ilce: Optional[str] = None, dogumtarihi: Optional[str] = None):
